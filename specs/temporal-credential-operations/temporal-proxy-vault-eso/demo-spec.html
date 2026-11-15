@@ -218,7 +218,7 @@ is the <a href="#migration">migration</a> to a Vault issuer.</p>
   <text class="muted" x="456" y="350" text-anchor="middle">rotation-state</text>
 
   <rect class="ns" x="530" y="272" width="210" height="116" rx="10"/>
-  <text class="group-label" x="544" y="292">ns: observability</text>
+  <text class="group-label" x="730" y="292" text-anchor="end">ns: observability</text>
   <rect class="node" x="540" y="304" width="96" height="64" rx="8"/>
   <text x="588" y="341" text-anchor="middle">Prometheus</text>
   <rect class="node" x="652" y="304" width="78" height="64" rx="8"/>
@@ -245,16 +245,16 @@ is the <a href="#migration">migration</a> to a Vault issuer.</p>
   <text class="muted" x="625" y="535" text-anchor="end">temporal-proxy.callers.svc:7233</text>
 
   <!-- control: ESO reconciles, Prometheus scrapes -->
-  <path class="edge ctl" d="M145,304 V238" marker-end="url(#topo-arrow)"/>
-  <path class="edge ctl" d="M145,368 V442" marker-end="url(#topo-arrow)"/>
-  <path class="edge ctl" d="M588,304 V238" marker-end="url(#topo-arrow)"/>
-  <path class="edge ctl" d="M588,368 V442" marker-end="url(#topo-arrow)"/>
-  <text class="muted" x="596" y="262">scrape</text>
+  <path class="edge ctl" d="M215,304 V238" marker-end="url(#topo-arrow)"/>
+  <path class="edge ctl" d="M215,368 V442" marker-end="url(#topo-arrow)"/>
+  <path class="edge ctl" d="M568,304 V238" marker-end="url(#topo-arrow)"/>
+  <path class="edge ctl" d="M568,368 V442" marker-end="url(#topo-arrow)"/>
+  <text class="muted" x="576" y="262">scrape</text>
 
   <!-- leaf issuance -->
-  <path class="edge" d="M220,236 L345,302" marker-end="url(#topo-arrow)"/>
-  <path class="edge" d="M220,444 L345,370" marker-end="url(#topo-arrow)"/>
-  <text class="muted" x="284" y="262">pki/issue</text>
+  <path class="edge" d="M240,232 L372,302" marker-end="url(#topo-arrow)"/>
+  <path class="edge" d="M240,448 L372,370" marker-end="url(#topo-arrow)"/>
+  <text class="muted" x="318" y="258">pki/issue</text>
 
   <!-- Temporal Cloud -->
   <rect class="node cloud" x="800" y="270" width="180" height="96" rx="12"/>
@@ -435,36 +435,66 @@ fails exits non-zero and changes nothing.</p>
 </table></div>
 
 <div class="diagram"><figure>
-<pre class="mermaid">
-sequenceDiagram
-  autonumber
-  actor Op as Operator
-  participant S as Scripts
-  participant V as Vault PKI
-  participant T as Temporal Cloud (tcld)
-  participant E as ESO + Proxies
-  participant P as Prometheus
-  Op->>S: 00-preflight, 01-snapshot
-  S->>P: all proxies healthy?
-  S->>T: accepted-client-ca list
-  Op->>S: 02-create-issuer
-  S->>V: generate issuer (internal key)
-  Op->>S: 03-add-trust
-  S->>T: add new CA, read back
-  Op->>S: 04-switch
-  S->>V: role issuer_ref = new
-  loop each refresh interval
-    E->>V: pki/issue
-    E->>E: Secret update, kubelet sync, proxy reload
-  end
-  Op->>S: 05-verify
-  S->>P: every proxy leaf NotAfter ≥ switch + L − skew?
-  Op->>S: 06-retire
-  S->>P: gate again
-  S->>T: remove old CA, read back
-  S->>V: old issuer usage = read-only
-</pre>
-<figcaption>The operator runs each step; the scripts make and verify every change.</figcaption>
+<svg class="dg" viewBox="0 0 1000 340" role="img" aria-labelledby="dtl-title">
+  <title id="dtl-title">CA rollover timeline: Temporal Cloud trusts both CAs from Add trust until Retire; Vault switches issuers at Switch; Worker and Caller proxies move to the new CA independently; retirement waits for the gate</title>
+  <rect class="zone risk" x="540" y="62" width="240" height="214"/>
+  <line class="guide" x1="220" y1="58" x2="220" y2="276"/>
+  <text class="muted" x="220" y="20" text-anchor="middle">1</text>
+  <text class="strong" x="220" y="36" text-anchor="middle">Snapshot</text>
+  <text class="muted mono" x="220" y="51" text-anchor="middle">01-snapshot</text>
+  <line class="guide" x1="330" y1="58" x2="330" y2="276"/>
+  <text class="muted" x="330" y="20" text-anchor="middle">2</text>
+  <text class="strong" x="330" y="36" text-anchor="middle">New issuer</text>
+  <text class="muted mono" x="330" y="51" text-anchor="middle">02-create-issuer</text>
+  <line class="guide" x1="440" y1="58" x2="440" y2="276"/>
+  <text class="muted" x="440" y="20" text-anchor="middle">3</text>
+  <text class="strong" x="440" y="36" text-anchor="middle">Add trust</text>
+  <text class="muted mono" x="440" y="51" text-anchor="middle">03-add-trust</text>
+  <line class="guide" x1="540" y1="58" x2="540" y2="276"/>
+  <text class="muted" x="540" y="20" text-anchor="middle">4</text>
+  <text class="strong" x="540" y="36" text-anchor="middle">Switch</text>
+  <text class="muted mono" x="540" y="51" text-anchor="middle">04-switch</text>
+  <line class="guide" x1="780" y1="58" x2="780" y2="276"/>
+  <text class="muted" x="780" y="20" text-anchor="middle">5</text>
+  <text class="strong" x="780" y="36" text-anchor="middle">Verify</text>
+  <text class="muted mono" x="780" y="51" text-anchor="middle">05-verify</text>
+  <line class="guide" x1="890" y1="58" x2="890" y2="276"/>
+  <text class="muted" x="890" y="20" text-anchor="middle">6</text>
+  <text class="strong" x="890" y="36" text-anchor="middle">Retire</text>
+  <text class="muted mono" x="890" y="51" text-anchor="middle">06-retire</text>
+
+  <text x="20" y="85">Temporal Cloud accepts</text>
+  <rect class="bar old" x="220" y="64" width="670" height="20" rx="4"/>
+  <text class="bar-label" x="228" y="78">old CA</text>
+  <rect class="bar new" x="440" y="88" width="540" height="20" rx="4"/>
+  <text class="bar-label" x="448" y="102">new CA</text>
+
+  <text x="20" y="147">Vault PKI signs with</text>
+  <rect class="bar old" x="220" y="132" width="320" height="20" rx="4"/>
+  <text class="bar-label" x="228" y="146">old issuer</text>
+  <rect class="bar new" x="540" y="132" width="440" height="20" rx="4"/>
+  <text class="bar-label" x="548" y="146">new issuer</text>
+
+  <text x="20" y="195">ns: workers proxies</text>
+  <rect class="bar old" x="220" y="180" width="420" height="20" rx="4"/>
+  <text class="bar-label" x="228" y="194">old-CA leaf</text>
+  <rect class="bar new" x="640" y="180" width="340" height="20" rx="4"/>
+  <text class="bar-label" x="648" y="194">new-CA leaf</text>
+
+  <text x="20" y="243">ns: callers proxies</text>
+  <rect class="bar old" x="220" y="228" width="480" height="20" rx="4"/>
+  <text class="bar-label" x="228" y="242">old-CA leaf</text>
+  <rect class="bar new" x="700" y="228" width="280" height="20" rx="4"/>
+  <text class="bar-label" x="708" y="242">new-CA leaf</text>
+
+  <line class="gate" x1="780" y1="58" x2="780" y2="276"/>
+  <text class="muted" x="660" y="296" text-anchor="middle">Old CA still presented somewhere:</text>
+  <text class="muted" x="660" y="312" text-anchor="middle">retiring here breaks that cluster</text>
+  <text class="muted" x="660" y="328" text-anchor="middle">(about R + K + P)</text>
+  <text class="muted" x="786" y="296">gate: every proxy</text>
+  <text class="muted" x="786" y="312">in both clusters is new</text>
+</svg>
+<figcaption>The same rollover as the proposal, with the script that runs each step. The two client namespaces stand in for the Worker and Caller clusters.</figcaption>
 </figure></div>
 
 <p>Emergency rollover uses the same scripts with a forced ESO refresh between steps 4
@@ -699,11 +729,5 @@ and is written from these scripts' actual output.</p>
 </main>
 </div>
 
-<script type="module">
-  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.esm.min.mjs";
-  const forced = document.documentElement.dataset.theme;
-  const dark = forced ? forced === "dark" : !window.matchMedia("(prefers-color-scheme: light)").matches;
-  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
-</script>
 </body>
 </html>

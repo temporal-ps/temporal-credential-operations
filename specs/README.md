@@ -14,7 +14,8 @@ committed content.
 
 Specs are HTML pages (`spec.html`) built from `TEMPLATE.html` and styled by
 `assets/spec.css`. Open a spec directly in a browser; no build step is
-needed. Diagrams use Mermaid loaded from a pinned CDN version.
+needed. Diagrams are hand-written inline SVG styled by the `.dg` classes in
+`spec.css`, so they follow the light and dark themes. Do not use Mermaid.
 `PROGRESS.md` stays Markdown.
 
 ## Workflow

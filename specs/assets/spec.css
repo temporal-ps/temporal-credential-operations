@@ -261,7 +261,6 @@ ul.checklist li.done::before { background: var(--ok); border-color: var(--ok); }
   margin: 16px 0; padding: 16px; overflow-x: auto;
   background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
 }
-.diagram .mermaid { text-align: center; }
 
 /* Inline SVG diagrams: shapes take their colors from the theme tokens. */
 .diagram svg.dg { display: block; width: 100%; max-width: 1000px; height: auto; margin: 0 auto; }
@@ -280,6 +279,15 @@ ul.checklist li.done::before { background: var(--ok); border-color: var(--ok); }
 .dg .edge.mtls { stroke: var(--ok); stroke-width: 2; }
 .dg .head { fill: var(--text-muted); }
 .dg .head.mtls { fill: var(--ok); }
+.dg text.strong { font-weight: 600; }
+.dg text.mono { font-family: var(--mono); font-size: 11px; }
+/* Timelines: .bar.old / .bar.new spans, .guide step lines, .gate marker, .zone.risk shading */
+.dg .bar.old { fill: color-mix(in srgb, var(--warn) 24%, transparent); stroke: var(--warn); stroke-width: 1; }
+.dg .bar.new { fill: color-mix(in srgb, var(--ok) 24%, transparent); stroke: var(--ok); stroke-width: 1; }
+.dg text.bar-label { font-size: 11.5px; }
+.dg .guide { stroke: var(--border); stroke-width: 1; stroke-dasharray: 3 4; }
+.dg .gate { stroke: var(--accent-2); stroke-width: 2; }
+.dg .zone.risk { fill: color-mix(in srgb, var(--risk) 9%, transparent); }
 figure { margin: 0; }
 figcaption { margin-top: 8px; font-size: 13px; color: var(--text-muted); }
 

@@ -14,7 +14,11 @@
     .cards > .card                               side-by-side summaries
     ol.phases                                    numbered procedure steps
     ul.checklist (li.done)                       criteria and questions
-    .diagram > figure > pre.mermaid              Mermaid diagram
+    .diagram > figure > svg.dg                   inline SVG diagram (no Mermaid)
+      shapes: .cluster .ns .node (.proxy .secret .cloud .actor)
+      lines:  .edge (.ctl .mtls) with marker paths .head (.mtls)
+      text:   .group-label .muted .strong .mono
+      timelines: .bar (.old .new) .bar-label .guide .gate .zone.risk
 -->
 <html lang="en">
 <head>
@@ -92,10 +96,18 @@ demo will leave them able to do.]</p>
 <h3>Approach Overview</h3>
 <p>[The approach after this concern is addressed: tools, patterns, and how they fit.]</p>
 <div class="diagram"><figure>
-<pre class="mermaid">
-flowchart LR
-  A["Component A"] --> B["Component B"]
-</pre>
+<svg class="dg" viewBox="0 0 520 100" role="img" aria-labelledby="overview-title">
+  <title id="overview-title">[Text alternative for the diagram]</title>
+  <defs>
+    <marker id="overview-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker>
+  </defs>
+  <rect class="node" x="20" y="24" width="180" height="52" rx="8"/>
+  <text class="strong" x="110" y="55" text-anchor="middle">[Component A]</text>
+  <rect class="node" x="320" y="24" width="180" height="52" rx="8"/>
+  <text class="strong" x="410" y="55" text-anchor="middle">[Component B]</text>
+  <path class="edge" d="M200,50 H318" marker-end="url(#overview-arrow)"/>
+  <text class="muted" x="260" y="42" text-anchor="middle">[label]</text>
+</svg>
 <figcaption>[What the diagram shows.]</figcaption>
 </figure></div>
 <h3>Key Capabilities</h3>
@@ -190,11 +202,5 @@ or tool names.]</p>
 </main>
 </div>
 
-<script type="module">
-  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.esm.min.mjs";
-  const forced = document.documentElement.dataset.theme;
-  const dark = forced ? forced === "dark" : !window.matchMedia("(prefers-color-scheme: light)").matches;
-  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
-</script>
 </body>
 </html>

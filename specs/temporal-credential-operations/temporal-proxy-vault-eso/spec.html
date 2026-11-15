@@ -24,6 +24,7 @@
     <li><a href="#proposal">Proposal</a>
       <ol>
         <li><a href="#architecture">Architecture</a></li>
+        <li><a href="#split">Workers and Callers</a></li>
         <li><a href="#lifecycles">Two lifecycles</a></li>
         <li><a href="#why-proxy">What the proxy makes observable</a></li>
         <li><a href="#sequence">Rollover sequence</a></li>
@@ -135,31 +136,104 @@ Temporal Proxy.</p>
 
 <h3 id="architecture">Architecture</h3>
 <div class="diagram"><figure>
-<pre class="mermaid">
-flowchart LR
-  subgraph V["Vault (shared, infrastructure team)"]
-    PKI["PKI mount<br/>issuer: current CA<br/>role: temporal-client"]
-  end
-  subgraph WC["Worker cluster"]
-    W["Workers"] -->|"Service DNS :7233"| WP["Temporal Proxy"]
-    WE["ESO ExternalSecret"] -->|"Secret: leaf"| WP
-  end
-  subgraph CC["Caller cluster"]
-    C["Callers"] -->|"Service DNS :7233"| CP["Temporal Proxy"]
-    CE["ESO ExternalSecret"] -->|"Secret: leaf"| CP
-  end
-  WE -->|"pki/issue"| PKI
-  CE -->|"pki/issue"| PKI
-  WP -->|"mTLS"| TC["Temporal Cloud Namespaces<br/>accepted client CAs"]
-  CP -->|"mTLS"| TC
-  M["Metrics<br/>(every proxy)"] -.->|scrape| WP
-  M -.->|scrape| CP
-  R["Rollover runner<br/>(scripts, tool, or Workflow)"] --> PKI
-  R -->|"Ops API"| TC
-  R -->|"gate query"| M
-</pre>
-<figcaption>Proposed production shape. Applications hold no Temporal Cloud credentials;
-each cluster's proxy holds a leaf that ESO renews from Vault.</figcaption>
+<svg class="dg" viewBox="0 0 1000 690" role="img" aria-labelledby="arch-title">
+  <title id="arch-title">Proposed architecture: a Worker cluster and a Caller cluster, each with ESO and its own Temporal Proxy, sharing Vault PKI, a metrics system, and a rollover runner, connected to Temporal Cloud Namespaces</title>
+  <defs>
+    <marker id="arch-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="arch-arrow-mtls" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head mtls" d="M0,0 L10,5 L0,10 z"/></marker>
+  </defs>
+  <!-- Worker cluster -->
+  <rect class="cluster" x="20" y="20" width="660" height="230" rx="14"/>
+  <text class="group-label" x="36" y="42">Worker cluster</text>
+  <text class="muted" x="664" y="42" text-anchor="end">Worker Deployments, Worker pipeline</text>
+  <rect class="ns" x="32" y="52" width="636" height="186" rx="10"/>
+  <text class="group-label" x="46" y="72">client namespace</text>
+  <rect class="node" x="44" y="170" width="176" height="56" rx="8"/>
+  <text class="strong" x="132" y="194" text-anchor="middle">ExternalSecret</text>
+  <text class="muted" x="132" y="212" text-anchor="middle">Vault generator</text>
+  <rect class="node secret" x="244" y="170" width="152" height="56" rx="8"/>
+  <text class="strong" x="320" y="194" text-anchor="middle">Secret</text>
+  <text class="muted" x="320" y="212" text-anchor="middle">leaf + key</text>
+  <rect class="node proxy" x="420" y="170" width="190" height="56" rx="8"/>
+  <text class="strong" x="515" y="194" text-anchor="middle">Temporal Proxy</text>
+  <text class="muted" x="515" y="212" text-anchor="middle">reloads, reports leaf</text>
+  <rect class="node actor" x="420" y="82" width="190" height="52" rx="8"/>
+  <text class="strong" x="515" y="104" text-anchor="middle">Workers</text>
+  <text class="muted" x="515" y="122" text-anchor="middle">no Temporal Cloud credentials</text>
+  <path class="edge" d="M220,198 H242" marker-end="url(#arch-arrow)"/>
+  <path class="edge" d="M396,198 H418" marker-end="url(#arch-arrow)"/>
+  <path class="edge" d="M515,134 V168" marker-end="url(#arch-arrow)"/>
+  <text class="muted" x="507" y="156" text-anchor="end">Service DNS :7233</text>
+  <!-- Caller cluster -->
+  <rect class="cluster" x="20" y="440" width="660" height="230" rx="14"/>
+  <text class="group-label" x="36" y="660">Caller cluster</text>
+  <text class="muted" x="664" y="660" text-anchor="end">Caller Deployments, Caller pipeline</text>
+  <rect class="ns" x="32" y="452" width="636" height="186" rx="10"/>
+  <text class="group-label" x="46" y="630">client namespace</text>
+  <rect class="node" x="44" y="484" width="176" height="56" rx="8"/>
+  <text class="strong" x="132" y="508" text-anchor="middle">ExternalSecret</text>
+  <text class="muted" x="132" y="526" text-anchor="middle">Vault generator</text>
+  <rect class="node secret" x="244" y="484" width="152" height="56" rx="8"/>
+  <text class="strong" x="320" y="508" text-anchor="middle">Secret</text>
+  <text class="muted" x="320" y="526" text-anchor="middle">leaf + key</text>
+  <rect class="node proxy" x="420" y="484" width="190" height="56" rx="8"/>
+  <text class="strong" x="515" y="508" text-anchor="middle">Temporal Proxy</text>
+  <text class="muted" x="515" y="526" text-anchor="middle">reloads, reports leaf</text>
+  <rect class="node actor" x="420" y="572" width="190" height="52" rx="8"/>
+  <text class="strong" x="515" y="594" text-anchor="middle">Callers</text>
+  <text class="muted" x="515" y="612" text-anchor="middle">no Temporal Cloud credentials</text>
+  <path class="edge" d="M220,512 H242" marker-end="url(#arch-arrow)"/>
+  <path class="edge" d="M396,512 H418" marker-end="url(#arch-arrow)"/>
+  <path class="edge" d="M515,572 V542" marker-end="url(#arch-arrow)"/>
+  <text class="muted" x="507" y="560" text-anchor="end">Service DNS :7233</text>
+
+  <!-- shared band -->
+  <rect class="node" x="40" y="298" width="200" height="88" rx="8"/>
+  <text class="strong" x="140" y="338" text-anchor="middle">Vault PKI</text>
+  <text class="muted" x="140" y="356" text-anchor="middle">shared; current issuer + role</text>
+  <rect class="node" x="290" y="298" width="180" height="88" rx="8"/>
+  <text class="strong" x="380" y="338" text-anchor="middle">Metrics</text>
+  <text class="muted" x="380" y="356" text-anchor="middle">every proxy, both clusters</text>
+  <rect class="node actor" x="510" y="298" width="160" height="88" rx="8"/>
+  <text class="strong" x="590" y="338" text-anchor="middle">Rollover runner</text>
+  <text class="muted" x="590" y="356" text-anchor="middle">scripts, tool, or Workflow</text>
+
+  <!-- leaf issuance: ESO -> Vault -->
+  <path class="edge" d="M110,226 V296" marker-end="url(#arch-arrow)"/>
+  <path class="edge" d="M110,484 V388" marker-end="url(#arch-arrow)"/>
+  <text class="muted" x="118" y="266">pki/issue every R</text>
+  <text class="muted" x="118" y="418">pki/issue every R</text>
+
+  <!-- scrape: Metrics -> proxies -->
+  <path class="edge ctl" d="M440,298 V228" marker-end="url(#arch-arrow)"/>
+  <path class="edge ctl" d="M440,386 V482" marker-end="url(#arch-arrow)"/>
+  <text class="muted" x="448" y="266">scrape</text>
+  <text class="muted" x="448" y="418">scrape</text>
+
+  <!-- runner -->
+  <path class="edge" d="M510,342 H472" marker-end="url(#arch-arrow)"/>
+  <text class="muted" x="491" y="334" text-anchor="middle">gate</text>
+  <path class="edge" d="M590,386 V400 H210 V388" marker-end="url(#arch-arrow)"/>
+  <text class="muted" x="330" y="418" text-anchor="middle">create, switch, disable issuer</text>
+  <path class="edge" d="M670,342 H758" marker-end="url(#arch-arrow)"/>
+  <text class="muted" x="714" y="334" text-anchor="middle">Ops API</text>
+
+  <!-- Temporal Cloud -->
+  <rect class="node cloud" x="760" y="278" width="210" height="128" rx="12"/>
+  <text class="strong" x="865" y="318" text-anchor="middle">Temporal Cloud</text>
+  <text x="865" y="338" text-anchor="middle">Namespaces</text>
+  <text class="muted" x="865" y="358" text-anchor="middle">accepted client CAs</text>
+  <path class="edge mtls" d="M610,198 C700,198 700,302 758,302" marker-end="url(#arch-arrow-mtls)"/>
+  <path class="edge mtls" d="M610,512 C700,512 700,382 758,382" marker-end="url(#arch-arrow-mtls)"/>
+  <text class="muted" x="620" y="190">mTLS</text>
+  <text class="muted" x="620" y="532">mTLS</text>
+
+  <!-- legend -->
+  <path class="edge" d="M760,48 H790"/><text class="muted" x="798" y="52">request or data</text>
+  <path class="edge ctl" d="M760,70 H790"/><text class="muted" x="798" y="74">scrape</text>
+  <path class="edge mtls" d="M760,92 H790"/><text class="muted" x="798" y="96">mTLS to Temporal Cloud</text>
+</svg>
+<figcaption>Workers and Callers run in separate clusters with separate pipelines. Each cluster gets its own proxy, ESO resources, and Vault auth role, and holds no Temporal Cloud credentials. Vault, metrics, and the rollover runner are shared.</figcaption>
 </figure></div>
 
 <div class="table-wrap"><table>
@@ -173,6 +247,30 @@ each cluster's proxy holds a leaf that ESO renews from Vault.</figcaption>
     <tr><td>Workers and Callers</td><td>Connect to the proxy's Service address with the fully qualified Namespace name.</td><td>No Temporal Cloud credentials</td></tr>
   </tbody>
 </table></div>
+
+<h3 id="split">Workers and Callers</h3>
+<p>Acme runs Workers and Callers in separate clusters, deployed by separate pipelines.
+Today's procedure restarts Worker Deployments; whether Callers present certificates
+from the same CA has not been confirmed. That is the largest risk in any rollover:
+removing the old CA breaks every client the procedure missed, and a Caller that fails
+to start Workflows fails in a different place, owned by a different pipeline, than a
+Worker that stops polling.</p>
+<p>The proposal treats the two clusters the same way and independently:</p>
+<ul>
+  <li><strong>Separate credential paths.</strong> Each cluster has its own Temporal
+  Proxy Deployment, its own <code>ExternalSecret</code>, and its own Vault Kubernetes
+  auth role. A broken delivery chain in one cluster does not affect the other.</li>
+  <li><strong>Independent movement.</strong> After a switch, each cluster's proxies
+  move to the new issuer on their own refresh schedule. Nothing coordinates them, and
+  nothing needs to.</li>
+  <li><strong>One gate across both.</strong> The <a href="#gate">retirement gate</a>
+  counts the proxies in both clusters against the expected total. A stale or missing
+  proxy in either cluster blocks retirement and is named.</li>
+  <li><strong>Per-cluster migration.</strong> Workers and Callers can move onto the
+  proxy at different times through their own pipelines. The old CA cannot be retired
+  until both have, and until no client in either cluster presents a certificate
+  without going through a proxy.</li>
+</ul>
 
 <h3 id="lifecycles">Two lifecycles</h3>
 <div class="cards">
@@ -270,28 +368,60 @@ contracts are the same whichever <a href="#options">execution option</a> runs th
 </table></div>
 
 <div class="diagram"><figure>
-<pre class="mermaid">
-sequenceDiagram
-  autonumber
-  participant R as Rollover runner
-  participant V as Vault PKI
-  participant T as Temporal Cloud
-  participant E as ESO + Proxies
-  participant M as Metrics
-  R->>M: preflight: all proxies healthy?
-  R->>T: snapshot accepted CAs
-  R->>V: create issuer (internal key)
-  R->>T: add new CA, read back
-  R->>V: switch role to new issuer
-  loop each refresh interval
-    E->>V: issue leaf
-    E->>E: Secret update, proxy reload
-  end
-  R->>M: gate: every proxy on a post-switch leaf?
-  R->>T: remove old CA, read back
-  R->>V: old issuer: stop signing
-</pre>
-<figcaption>Only step 6 can cause an outage, and it runs only after the gate passes.</figcaption>
+<svg class="dg" viewBox="0 0 1000 340" role="img" aria-labelledby="tl-title">
+  <title id="tl-title">CA rollover timeline: Temporal Cloud trusts both CAs from Add trust until Retire; Vault switches issuers at Switch; Worker and Caller proxies move to the new CA independently; retirement waits for the gate</title>
+  <rect class="zone risk" x="540" y="62" width="240" height="214"/>
+  <line class="guide" x1="220" y1="58" x2="220" y2="276"/>
+  <text class="muted" x="220" y="20" text-anchor="middle">1</text>
+  <text class="strong" x="220" y="36" text-anchor="middle">Snapshot</text>
+  <line class="guide" x1="330" y1="58" x2="330" y2="276"/>
+  <text class="muted" x="330" y="20" text-anchor="middle">2</text>
+  <text class="strong" x="330" y="36" text-anchor="middle">New issuer</text>
+  <line class="guide" x1="440" y1="58" x2="440" y2="276"/>
+  <text class="muted" x="440" y="20" text-anchor="middle">3</text>
+  <text class="strong" x="440" y="36" text-anchor="middle">Add trust</text>
+  <line class="guide" x1="540" y1="58" x2="540" y2="276"/>
+  <text class="muted" x="540" y="20" text-anchor="middle">4</text>
+  <text class="strong" x="540" y="36" text-anchor="middle">Switch</text>
+  <line class="guide" x1="780" y1="58" x2="780" y2="276"/>
+  <text class="muted" x="780" y="20" text-anchor="middle">5</text>
+  <text class="strong" x="780" y="36" text-anchor="middle">Verify</text>
+  <line class="guide" x1="890" y1="58" x2="890" y2="276"/>
+  <text class="muted" x="890" y="20" text-anchor="middle">6</text>
+  <text class="strong" x="890" y="36" text-anchor="middle">Retire</text>
+
+  <text x="20" y="85">Temporal Cloud accepts</text>
+  <rect class="bar old" x="220" y="64" width="670" height="20" rx="4"/>
+  <text class="bar-label" x="228" y="78">old CA</text>
+  <rect class="bar new" x="440" y="88" width="540" height="20" rx="4"/>
+  <text class="bar-label" x="448" y="102">new CA</text>
+
+  <text x="20" y="147">Vault PKI signs with</text>
+  <rect class="bar old" x="220" y="132" width="320" height="20" rx="4"/>
+  <text class="bar-label" x="228" y="146">old issuer</text>
+  <rect class="bar new" x="540" y="132" width="440" height="20" rx="4"/>
+  <text class="bar-label" x="548" y="146">new issuer</text>
+
+  <text x="20" y="195">Worker proxies present</text>
+  <rect class="bar old" x="220" y="180" width="420" height="20" rx="4"/>
+  <text class="bar-label" x="228" y="194">old-CA leaf</text>
+  <rect class="bar new" x="640" y="180" width="340" height="20" rx="4"/>
+  <text class="bar-label" x="648" y="194">new-CA leaf</text>
+
+  <text x="20" y="243">Caller proxies present</text>
+  <rect class="bar old" x="220" y="228" width="480" height="20" rx="4"/>
+  <text class="bar-label" x="228" y="242">old-CA leaf</text>
+  <rect class="bar new" x="700" y="228" width="280" height="20" rx="4"/>
+  <text class="bar-label" x="708" y="242">new-CA leaf</text>
+
+  <line class="gate" x1="780" y1="58" x2="780" y2="276"/>
+  <text class="muted" x="660" y="296" text-anchor="middle">Old CA still presented somewhere:</text>
+  <text class="muted" x="660" y="312" text-anchor="middle">retiring here breaks that cluster</text>
+  <text class="muted" x="660" y="328" text-anchor="middle">(about R + K + P)</text>
+  <text class="muted" x="786" y="296">gate: every proxy</text>
+  <text class="muted" x="786" y="312">in both clusters is new</text>
+</svg>
+<figcaption>The two clusters move to the new CA independently. Only Retire can cause an outage, and it waits for the gate to see every proxy in both clusters on a new-CA leaf.</figcaption>
 </figure></div>
 
 <h3 id="gate">Retirement gate</h3>
@@ -324,9 +454,10 @@ increase(tmprl_proxy_tls_reloads_total{result="failure"}[15m]) &gt; 0</code></pr
 <p>The first rollover moves clients from today's manually generated CA to a Vault
 issuer. It is the only step in the design that restarts Pods.</p>
 <ol class="phases">
-  <li><strong>Introduce the proxy with today's certificate.</strong> Deploy the proxy
-  in each client namespace mounting the existing certificate and key, then repoint
-  Workers and Callers at it. Nothing about trust changes.</li>
+  <li><strong>Introduce the proxy with today's certificate.</strong> In the Worker
+  cluster and the Caller cluster, each through its own pipeline, deploy the proxy
+  mounting the existing certificate and key, then repoint Workers or Callers at it.
+  Nothing about trust changes.</li>
   <li><strong>Snapshot, create issuer, add trust.</strong> As steps 1 to 3. Today's CA
   is recorded as the old CA.</li>
   <li><strong>Switch (migration form).</strong> Apply the ESO resources, wait until
@@ -435,6 +566,29 @@ Namespaces.</p>
       <td>A Worker, an owning team and on-call, and a long-lived, secured holder of the Ops API key.</td></tr>
   </tbody>
 </table></div>
+<div class="callout"><div class="title">If the runner becomes a Workflow, call the APIs directly</div>
+<p>The scripts drive <code>tcld</code>, the Vault CLI, and <code>kubectl</code> because
+that keeps each step readable for an operator. Activities in a RotateCredential
+Workflow should instead call the Temporal Cloud Ops API, the Vault HTTP API, the
+Kubernetes API, and the metrics query API through client libraries, rather than
+running those CLIs as subprocesses:</p>
+<ul>
+  <li><strong>Failure handling.</strong> Typed errors let an Activity tell a retryable
+  failure (timeout, throttling, resource version conflict) from a permanent one (not
+  authorized, Namespace not found). A CLI reduces both to an exit code and text on
+  standard error that the Activity would have to parse.</li>
+  <li><strong>Idempotency.</strong> Request IDs and resource versions are set as
+  request fields from Workflow state, so a retried Activity repeats the same request
+  instead of issuing a new one.</li>
+  <li><strong>Credentials.</strong> The Ops API key and Vault token stay in the Worker
+  process, not in subprocess environments or arguments.</li>
+  <li><strong>Packaging.</strong> The Worker image carries no CLI binaries whose
+  versions and output formats must be kept in step with the code that parses them.</li>
+</ul>
+<p>The step contracts do not change: each script's action and verification becomes
+one Activity's request and its read-back check, and the scripts remain the reference
+for what each Activity must do.</p></div>
+
 <p>Because Temporal Proxy is the only holder of Temporal Cloud client credentials, no
 option selects, restarts, or inspects Worker and Caller Deployments. The requirement
 with the largest effect on the choice is CA topology: one CA shared across Namespaces
@@ -450,7 +604,7 @@ the rest.</p>
 <div class="table-wrap"><table>
   <thead><tr><th>Possibility</th><th>Trigger</th><th>What changes</th></tr></thead>
   <tbody>
-    <tr><td>Scripts, then a tool, then a Workflow</td><td>Namespace count or rollover frequency grows past attended operation.</td><td>Only the runner. The step contracts, gate, and state record carry over.</td></tr>
+    <tr><td>Scripts, then a tool, then a Workflow</td><td>Namespace count or rollover frequency grows past attended operation.</td><td>Only the runner. The step contracts, gate, and state record carry over. A Workflow's Activities call the underlying APIs directly instead of the CLIs the scripts use.</td></tr>
     <tr><td>Scheduled rollovers</td><td>Rollovers become routine enough to run unattended.</td><td>A Temporal Schedule starts the RotateCredential Workflow ahead of issuer expiry; approval becomes a Signal or Update rather than an operator running a step.</td></tr>
     <tr><td>Per-Namespace or per-trust-domain CAs</td><td>Security requirements call for separation between environments, regions, or Namespaces.</td><td>More issuers and Vault roles, one rollover per CA. The gate filters to the proxies that present each CA.</td></tr>
     <tr><td>Trust changes through Terraform</td><td>Acme keeps Terraform as the single source of Namespace configuration.</td><td>Steps 3 and 6 become a Terraform change and apply instead of an Ops API call; verifications stay the same.</td></tr>
@@ -564,11 +718,5 @@ Acme's lifetime policy, or proxy behavior under production load.</p>
 </main>
 </div>
 
-<script type="module">
-  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.esm.min.mjs";
-  const forced = document.documentElement.dataset.theme;
-  const dark = forced ? forced === "dark" : !window.matchMedia("(prefers-color-scheme: light)").matches;
-  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
-</script>
 </body>
 </html>

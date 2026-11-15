@@ -187,6 +187,11 @@ CLI runs inside the Vault Pod, so operators need no local Vault install.
   questions surfaced in the proposal: client inventory, ownership of
   accepted client CAs versus Terraform Enterprise, Vault PKI placement,
   cross-cluster metrics for the gate, and proxy placement.
+- 2026-11-15 (user): If the rollover runner becomes a RotateCredential
+  Workflow, its Activities should call the Temporal Cloud Ops API, Vault,
+  Kubernetes, and metrics APIs directly rather than shelling out to `tcld`,
+  the Vault CLI, or `kubectl`. Conforming clarification in the proposal's
+  execution options and evolution sections.
 
 ## Roadmap
 

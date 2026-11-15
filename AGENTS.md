@@ -150,7 +150,9 @@ Use clear, direct Markdown.
 Specs are HTML (`spec.html`), copied from `specs/TEMPLATE.html` and styled
 by the shared `specs/assets/spec.css`, which follows the Temporal
 documentation site's palette. Keep styling in that stylesheet, not inline.
-Use Mermaid (pinned version from a CDN, as in the template) for diagrams.
+Draw diagrams as inline SVG using the `.dg` classes in `spec.css` (see the
+template), not Mermaid. Diagrams are customer-facing: lay them out by hand,
+avoid crossing lines where possible, and give each a `<title>` text alternative.
 `PROGRESS.md`, runbooks, and demo READMEs stay Markdown.
 
 `spec.html` is the customer-facing proposal: it must let the customer's
