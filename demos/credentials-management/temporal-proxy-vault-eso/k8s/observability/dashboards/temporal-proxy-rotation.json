@@ -419,7 +419,25 @@
     }
   ],
   "annotations": {
-    "list": []
+    "list": [
+      {
+        "datasource": {
+          "type": "datasource",
+          "uid": "grafana"
+        },
+        "enable": true,
+        "iconColor": "#b664ff",
+        "name": "Rotation steps",
+        "target": {
+          "type": "tags",
+          "tags": [
+            "rotation"
+          ],
+          "matchAny": true,
+          "limit": 100
+        }
+      }
+    ]
   },
   "templating": {
     "list": []

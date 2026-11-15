@@ -166,6 +166,99 @@ ready_proxy_pods() {
   done
 }
 
+# --- Vault PKI issuers -------------------------------------------------------
+# The issuer the temporal-client role signs with.
+role_issuer() {
+  vault_exec read -format=json "$PKI_MOUNT/roles/$PKI_ROLE" | jq -r '.data.issuer_ref'
+}
+
+# PEM certificate of a Vault issuer.
+issuer_cert() {
+  vault_exec read -format=json "$PKI_MOUNT/issuer/$1" | jq -r '.data.certificate'
+}
+
+# --- Retirement gate -----------------------------------------------------------
+# Evaluates the gate against the switch recorded in rotation-state and prints
+# one PASS or FAIL line per check. Returns non-zero if any check fails.
+#
+#   1. Every proxy Deployment is fully Ready, and every Ready proxy Pod reports
+#      a loaded leaf. (Prometheus keeps a terminated Pod's series for a few
+#      minutes, so only series from currently Ready Pods count.)
+#   2. Every loaded leaf was issued after the switch:
+#      NotAfter >= switch + leaf TTL - skew.
+#   3. No TLS reload failures in the last 15 minutes.
+#   4. Each namespace's Secret holds a leaf signed by the new issuer.
+GATE_SKEW_SECONDS="${GATE_SKEW_SECONDS:-120}"
+
+gate_evaluate() {
+  local switch_epoch issuer pem ns ready want expected=0 rc=0
+  switch_epoch="$(state_get switch_epoch)"
+  issuer="$(state_get new_issuer)"
+  pem="$STATE_DIR/$issuer.pem"
+  [ -n "$switch_epoch" ] || { log "FAIL gate: no switch recorded"; return 1; }
+  [ -f "$pem" ] || { log "FAIL gate: missing $pem"; return 1; }
+
+  for ns in "${CLIENT_NAMESPACES[@]}"; do
+    ready="$(kc -n "$ns" get deploy temporal-proxy -o jsonpath='{.status.readyReplicas}')"
+    want="$(kc -n "$ns" get deploy temporal-proxy -o jsonpath='{.spec.replicas}')"
+    if [ "${ready:-0}" != "$want" ]; then
+      log "FAIL gate: $ns/temporal-proxy ready ${ready:-0}/$want"; rc=1
+    fi
+    expected=$((expected + want))
+  done
+
+  local ready_pods series count min stale
+  ready_pods="$(ready_proxy_pods | jq -R . | jq -sc .)"
+  series="$(prom_query 'tmprl_proxy_tls_cert_expiry_timestamp_seconds{file="cert"}'     | jq --argjson ready "$ready_pods"       '[.data.result[] | select(("\(.metric.namespace)/\(.metric.pod)") as $p | $ready | index($p))]')"
+  count="$(jq 'length' <<<"$series")"
+  if [ "$count" -eq "$expected" ]; then
+    log "PASS gate: $count of $expected proxies report a loaded leaf"
+  else
+    log "FAIL gate: $count of $expected proxies report a loaded leaf"; rc=1
+  fi
+
+  min=$((switch_epoch + LEAF_TTL_SECONDS - GATE_SKEW_SECONDS))
+  stale="$(jq -r --argjson min "$min" '.[] | select((.value[1]|tonumber) < $min)
+    | "\(.metric.namespace)/\(.metric.pod) leaf NotAfter \(.value[1]|tonumber|floor|todate)"' <<<"$series")"
+  if [ -z "$stale" ]; then
+    log "PASS gate: every loaded leaf was issued after the switch"
+  else
+    while IFS= read -r line; do log "FAIL gate: pre-switch leaf on $line"; done <<<"$stale"
+    rc=1
+  fi
+
+  local failures
+  failures="$(prom_query 'sum(increase(tmprl_proxy_tls_reloads_total{result="failure"}[15m])) or vector(0)'     | jq -r '.data.result[0].value[1] | tonumber | floor')"
+  if [ "$failures" = "0" ]; then
+    log "PASS gate: no TLS reload failures in the last 15 minutes"
+  else
+    log "FAIL gate: $failures TLS reload failures in the last 15 minutes"; rc=1
+  fi
+
+  local crt
+  for ns in "${CLIENT_NAMESPACES[@]}"; do
+    crt="$(kc -n "$ns" get secret temporal-cloud-leaf -o jsonpath='{.data.tls\.crt}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+    if [ -n "$crt" ] && openssl verify -CAfile "$pem" <(printf '%s\n' "$crt") >/dev/null 2>&1; then
+      log "PASS gate: $ns Secret holds a leaf signed by $issuer"
+    else
+      log "FAIL gate: $ns Secret does not hold a leaf signed by $issuer"; rc=1
+    fi
+  done
+  return "$rc"
+}
+
+# --- Grafana annotations ---------------------------------------------------------
+# Posts an org-wide annotation tagged "rotation" (shown on the dashboard).
+# Runs inside the Grafana Pod with its own admin credential, which never
+# leaves the cluster. Best effort: a failure is reported, not fatal.
+grafana_annotate() {
+  local text="$1" body
+  body="$(jq -cn --arg t "$text" --argjson ms "$(( $(now_epoch) * 1000 ))"     '{time: $ms, tags: ["rotation"], text: $t}')"
+  kc -n "$OBSERVABILITY_NAMESPACE" exec deploy/grafana -c grafana -- sh -c \
+    'wget -qO- --header "Content-Type: application/json" --post-data "$1" "http://admin:$GF_SECURITY_ADMIN_PASSWORD@localhost:3000/api/annotations"' \
+    _ "$body" >/dev/null 2>&1 || log "  (could not post Grafana annotation: $text)"
+}
+
 # --- Time --------------------------------------------------------------------
 now_epoch() { date -u +%s; }
 epoch_to_iso() { date -u -r "$1" +%FT%TZ 2>/dev/null || date -u -d "@$1" +%FT%TZ; }

@@ -4,6 +4,7 @@
 #   accepted_cas        Accepted client CA fingerprints (tcld, read only)
 #   resource_version    The Namespace's resource version, for step 3
 #   old_ca_fingerprint  The CA the proxies' current leaves chain to
+#   old_issuer          The Vault issuer behind it (empty before migration)
 #   leaf_source         manual (before migration) or vault
 #   expected_proxies    Ready proxy replicas across client namespaces
 #
@@ -21,7 +22,7 @@ use_ops_api_key
 
 phase="$(state_get phase)"
 case "$phase" in
-  ""|retired) ;;
+  ""|retired|rolled-back) ;;
   *) fail "rollover in progress (phase=$phase); finish or roll back before taking a new snapshot" ;;
 esac
 
@@ -32,10 +33,11 @@ if [ "$leaf_source" = "manual" ]; then
   require_demo_ca
   old_fp="$(cert_sha1 < "$MANUAL_CERT_FILE")"
   old_desc="manual bootstrap CA ($(basename "$MANUAL_CERT_FILE"))"
+  old_issuer=""
 else
-  issuer="$(vault_exec read -format=json "$PKI_MOUNT/roles/$PKI_ROLE" | jq -r '.data.issuer_ref')"
-  old_fp="$(vault_exec read -format=json "$PKI_MOUNT/issuer/$issuer" | jq -r '.data.certificate' | cert_sha1)"
-  old_desc="Vault issuer $issuer"
+  old_issuer="$(role_issuer)"
+  old_fp="$(issuer_cert "$old_issuer" | cert_sha1)"
+  old_desc="Vault issuer $old_issuer"
 fi
 
 accepted="$(accepted_ca_fingerprints)"
@@ -53,6 +55,7 @@ grep -qx "$old_fp" <<<"$accepted" \
 state_set accepted_cas "$(paste -sd, - <<<"$accepted")"
 state_set resource_version "$rv"
 state_set old_ca_fingerprint "$old_fp"
+state_set old_issuer "$old_issuer"
 state_set leaf_source "$leaf_source"
 state_set expected_proxies "$expected"
 state_set snapshot_time "$(date -u +%FT%TZ)"
