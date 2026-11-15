@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
-# Create the k3d cluster, import the proxy image, and deploy a
-# Temporal Proxy plus CLI probe in each client namespace, with Prometheus and
-# Grafana. The proxies present the manually generated bootstrap material.
+# Create the k3d cluster in the proposed state: Vault PKI and External Secrets
+# Operator (ESO), a first Vault issuer the demo Namespace trusts, and in each
+# client namespace a Temporal Proxy presenting ESO-delivered leaves plus a CLI
+# probe, with Prometheus and Grafana.
+#
+# CHANGES TEMPORAL CLOUD on a new cluster: bootstrap-issuer.sh replaces the
+# dedicated demo Namespace's accepted client CAs with the new first issuer.
 #
 # Idempotent: re-running converges on the same state.
 #
 # Verify: ./scripts/verify-proxies.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
-require_tools docker k3d kubectl openssl
+require_tools docker k3d kubectl helm jq openssl tcld temporal
 resolve_target
 
 if k3d cluster list "$CLUSTER_NAME" >/dev/null 2>&1; then
@@ -31,7 +35,8 @@ for ns in "${CLIENT_NAMESPACES[@]}"; do
     --dry-run=client -o yaml | kc apply -f -
 done
 
-"$DEMO_DIR/scripts/bootstrap-manual.sh"
+"$DEMO_DIR/scripts/vault-eso-up.sh"
+"$DEMO_DIR/scripts/bootstrap-issuer.sh"
 
 # Grafana admin password: generated once, never printed.
 if ! kc -n "$OBSERVABILITY_NAMESPACE" get secret grafana-admin >/dev/null 2>&1; then
@@ -40,11 +45,13 @@ if ! kc -n "$OBSERVABILITY_NAMESPACE" get secret grafana-admin >/dev/null 2>&1; 
 fi
 
 kc apply -k "$DEMO_DIR/k8s/observability"
-# After the migration switch, keep the proxies on the ESO-managed Secret.
-clients_dir="clients"
-[ "$(state_get leaf_source)" != "vault" ] || clients_dir="clients-vault"
 for ns in "${CLIENT_NAMESPACES[@]}"; do
-  kc apply -k "$DEMO_DIR/k8s/$clients_dir/$ns"
+  kc apply -k "$DEMO_DIR/k8s/clients/$ns"
+done
+apply_eso_refresh_interval
+for ns in "${CLIENT_NAMESPACES[@]}"; do
+  kc -n "$ns" wait --for=condition=Ready externalsecret/temporal-cloud-leaf --timeout=120s >/dev/null \
+    || { kc -n "$ns" describe externalsecret temporal-cloud-leaf | tail -15 >&2; fail "$ns: ExternalSecret not Ready"; }
 done
 
 for ns in "${CLIENT_NAMESPACES[@]}"; do

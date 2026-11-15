@@ -1,7 +1,9 @@
-# Client namespace "workers": one Temporal Proxy and one CLI probe.
+# Client namespace "workers": the ESO resources that deliver the leaf, one Temporal
+# Proxy mounting it, and one CLI probe.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: workers
 resources:
   - ../../proxy
   - ../../probe
+  - ../../eso-clients/workers

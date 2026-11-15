@@ -8,11 +8,12 @@ trusts, with no restarts and no failed calls. Vault PKI signs short-lived
 client leaves, External Secrets Operator (ESO) delivers them, and Temporal
 Proxy presents them to Temporal Cloud and reloads them as they change.
 
-The demo tells the story in three parts:
+The demo starts in the proposed state, with Vault issuing every leaf, and
+shows two things:
 
-1. **Today:** the proxies present a CA generated outside Vault.
-2. **Move to Vault:** a one-time migration to leaves signed by Vault PKI.
-3. **Rotate:** a complete CA rollover, plus what happens when something breaks.
+1. **Renewal:** leaves renew every minute with no restarts and no Temporal
+   Cloud change.
+2. **Rotate:** a complete CA rollover, plus what happens when something breaks.
 
 ## What it runs
 
@@ -31,36 +32,26 @@ One local k3d cluster (`tco-proxy-vault-eso`):
    `k3d`, `kubectl`, and `helm` at the versions pinned in the repository
    `.tool-versions`. With asdf, run `./scripts/setup-asdf-plugins.sh` then
    `asdf install` from the repository root. No local Vault CLI is needed.
-2. **A demo Temporal Cloud Namespace** dedicated to this demo. The scripts add
-   and remove its accepted client CAs, including removing your bootstrap CA,
-   so no other client may depend on it. It must use mTLS authentication with
-   your bootstrap CA accepted.
-3. **A bootstrap client CA:** a CA certificate (PEM) and its private key,
-   generated outside Vault. It stands in for the manually generated CA the demo
-   migrates away from. `*.pem` and `*.key` files are gitignored.
-4. **A Temporal Cloud Operations API key** for a user or service account with
+2. **A demo Temporal Cloud Namespace** dedicated to this demo, using mTLS
+   authentication. The scripts own its accepted client CAs: `up.sh` on a new
+   cluster replaces them with the cluster's first Vault issuer, and each
+   rollover retires its old CA. No other client may depend on it.
+3. **A Temporal Cloud Operations API key** for a user or service account with
    an account-level role (Global Admin). Scripts use it from your shell only;
    it is never placed in the cluster.
-5. **Configure.** From the repository root:
+4. **Configure.** From the repository root:
 
    ```bash
    cp .env.example .env.local
    ```
 
-   Set `TEMPORAL_CLOUD_OPS_API_KEY`, `TEMPORAL_DEMO_NAMESPACE_ADDRESS`
-   (`<namespace>.<account>.tmprl.cloud:7233`), `TEMPORAL_DEMO_CA_CERT_FILE`,
-   and `TEMPORAL_DEMO_CA_KEY_FILE`. Verify the CA file is a CA certificate:
-
-   ```bash
-   openssl x509 -in <your-ca.pem> -noout -text | grep 'CA:TRUE'
-   ```
-
-   Expected: a `CA:TRUE` line.
+   Set `TEMPORAL_CLOUD_OPS_API_KEY` and `TEMPORAL_DEMO_NAMESPACE_ADDRESS`
+   (`<namespace>.<account>.tmprl.cloud:7233`).
 
 Run the commands below from this directory. Every script ends with its own
 checks and exits non-zero if one fails.
 
-## 1. Today: proxies with the manual CA
+## 1. Bring it up on Vault
 
 ```bash
 ./scripts/build-proxy-image.sh
@@ -69,11 +60,19 @@ checks and exits non-zero if one fails.
 ```
 
 Builds Temporal Proxy from a pinned commit (hot reload is not yet in a tagged
-release), creates the cluster, and deploys the proxies with the bootstrap CA.
-If the Namespace no longer accepts the bootstrap CA (a previous run retired
-it), `up.sh` adds it back. Verify: `build-proxy-image.sh` ends with
-`Built temporal-proxy:<commit>`, and `verify-proxies.sh` ends with
-`Proxy path verified.`
+release), creates the cluster, and installs Vault and ESO. `bootstrap-issuer.sh`
+(run by `up.sh`) creates the first Vault issuer and, on a new cluster,
+**replaces the Namespace's accepted client CAs** with it, then proves a leaf
+from it is accepted. The proxies start on ESO-delivered leaves.
+
+Verify: `build-proxy-image.sh` ends with `Built temporal-proxy:<commit>`;
+`up.sh` prints `PASS a test leaf from <issuer> is accepted by <namespace>`;
+`verify-proxies.sh` ends with `Proxy path verified.` It reports how far each
+proxy's loaded leaf trails the mounted one: up to about 200 seconds is normal
+reload lag, because the Secret changes every minute.
+
+Re-running `up.sh` on an existing cluster changes nothing in Temporal Cloud.
+To start from scratch, run `./scripts/down.sh` first.
 
 Open the dashboard and tail the probes in another terminal:
 
@@ -84,31 +83,9 @@ Open the dashboard and tail the probes in another terminal:
 Grafana: <http://localhost:3000/d/temporal-proxy-rotation>.
 Prometheus (including Alerts): <http://localhost:9090>.
 
-## 2. Move to Vault (once per cluster)
+## 2. Watch renewal
 
-```bash
-./scripts/vault-eso-up.sh
-./scripts/rollover/01-snapshot.sh
-./scripts/rollover/02-create-issuer.sh
-./scripts/rollover/03-add-trust.sh
-./scripts/migrate-switch.sh
-./scripts/verify-migration.sh
-./scripts/rollover/05-verify.sh
-./scripts/rollover/06-retire.sh
-```
-
-| Script | Does | Verify: ends with |
-|---|---|---|
-| `vault-eso-up.sh` | Installs Vault and ESO; PKI mount, issue-only policy, one Kubernetes auth role per client namespace | a `PASS` login line per namespace |
-| `01-snapshot.sh` | Records the accepted CAs and the proxies' current CA in ConfigMap `vault/rotation-state` | `PASS the proxies' current CA is accepted` |
-| `02-create-issuer.sh` | Creates Vault issuer `ca-<timestamp>` (key never leaves Vault) and the signing role | a `PASS` line about the role |
-| `03-add-trust.sh` | **Temporal Cloud:** adds the Vault CA, then proves a leaf from it is accepted | `PASS a test leaf from <issuer> is accepted` |
-| `migrate-switch.sh` | Applies ESO, then repoints the proxies at its Secret (the only rolling restart) | both `rollout status` lines succeed |
-| `verify-migration.sh` | Every proxy on a Vault leaf, gate passing, probes clean | `Migration verified.` |
-| `05-verify.sh` | Evaluates the retirement gate | `Gate passed.` |
-| `06-retire.sh` | **Temporal Cloud:** removes the bootstrap CA, watches traffic | `Rollover complete: <namespace> trusts <fingerprint>` |
-
-From here on, leaves renew with nothing to do. To watch it:
+Leaves renew with nothing to do:
 
 ```bash
 ./scripts/watch-renewals.sh 3
@@ -124,9 +101,10 @@ no errors.` (about 4 minutes with the default settings).
 ```
 
 Runs the whole rollover while you watch Grafana: preflight, snapshot, new
-issuer, add trust, switch, verify, retire. About 6 minutes with the default
-settings: about 2 for Temporal Cloud to accept the new CA, about 3 for routine
-renewal to move every proxy to it, and about 1 to retire the old CA.
+issuer, add trust, switch, verify, retire. About 3 to 6 minutes with the
+default settings, most of it in two waits: Temporal Cloud accepting the new CA
+(add trust), and routine renewal moving every proxy to it (verify). One run
+took 186 s: 18 s to add trust, 111 s to verify, 39 s to retire.
 **Changes Temporal Cloud** (adds one CA, removes one) and Vault. Verify: ends
 with `Rollover complete in <seconds>s` and the time per step.
 
@@ -147,15 +125,27 @@ The same steps one at a time:
 
 ### When delivery breaks
 
-Run steps 0 to 4, then break one namespace's leaf delivery and try to retire:
+Run steps 0 to 4, then break the callers namespace's leaf delivery, move the
+workers proxies to the new issuer right away, and try to retire:
 
 ```bash
 ./scripts/inject-eso-failure.sh callers
+./scripts/force-refresh.sh workers
+```
+
+Wait about two minutes, until Grafana's **Leaf NotAfter** panel steps up for
+the workers proxies only, then try to retire:
+
+```bash
 ./scripts/rollover/06-retire.sh
 ```
 
 Verify: `PASS callers: ExternalSecret Ready=False`, then `06-retire.sh` exits
-non-zero with `FAIL gate: pre-switch leaf on callers/...` and removes nothing.
+non-zero with `FAIL gate: pre-switch leaf on callers/...` lines (and none for
+workers) and removes nothing. Probe calls keep succeeding: the callers proxies
+still hold a valid leaf, and the **Leaf renewal stalled** alert (ticket) goes
+pending, then firing.
+
 Repair it within the leaf lifetime (5 minutes by default), or the callers
 proxies' leaves expire and their calls fail:
 
@@ -202,7 +192,6 @@ start a rollover while a proxy's leaf is about to expire.
 
 | Command | Shows | Verify |
 |---|---|---|
-| `./scripts/rotate-manual-leaf.sh` | Hot reload while still on the manual CA (before part 2) | `PASS hot reload` |
 | `./scripts/force-refresh.sh` | ESO reissuing every leaf now | a `PASS` line per namespace with old and new serial |
 | `./scripts/check-issuer-expiry.sh` | The issuer is outside its rollover lead time | `PASS issuer <name> expires <date>` |
 
@@ -213,4 +202,5 @@ start a rollover while a proxy's leaf is about to expire.
 ```
 
 Deletes only the demo cluster. Temporal Cloud keeps whatever CAs the last
-script left accepted; the next `up.sh` adds the bootstrap CA back if needed.
+script left accepted; the next `up.sh` replaces them with the new cluster's
+first issuer.

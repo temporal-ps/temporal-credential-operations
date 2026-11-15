@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Roll an in-progress rollover back by one stage. Never removes the old CA.
 #
-#   switched or verified  Point the role back at the old issuer (or, for the
-#                         migration, repoint the proxies at the manual
-#                         Secret). The new CA stays trusted, because leaves it
+#   switched or verified  Point the role back at the old issuer. The new CA
+#                         stays trusted, because leaves it
 #                         signed may still be in use; the phase returns to
 #                         trusted. Run again to remove that trust.
 #   trusted               Remove the new CA from the Namespace's accepted CAs.
@@ -15,8 +14,8 @@
 # Refuses after retire: the old CA is already gone, so the way back is a new
 # rollover.
 #
-# CHANGES VAULT (role issuer_ref) or KUBERNETES (proxy Deployments) or
-# TEMPORAL CLOUD (removes only the new CA), depending on the phase.
+# CHANGES VAULT (role issuer_ref) or TEMPORAL CLOUD (removes only the new
+# CA), depending on the phase.
 #
 # Verify: the role and the accepted CAs match the state the rollback targets.
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/common.sh"
@@ -33,26 +32,12 @@ new_fp="$(state_get new_ca_fingerprint)"
 
 case "$phase" in
   switched|verified)
-    if [ -n "$old_issuer" ]; then
-      log "Pointing role $PKI_ROLE back at $old_issuer"
-      vault_exec patch "$PKI_MOUNT/roles/$PKI_ROLE" issuer_ref="$old_issuer" >/dev/null
-      [ "$(role_issuer)" = "$old_issuer" ] || fail "role $PKI_ROLE does not read back $old_issuer"
-      log "PASS role $PKI_ROLE signs with $old_issuer"
-      log "Leaves move back at the next ESO refresh; run ./scripts/force-refresh.sh to move them now."
-    else
-      require_demo_ca
-      log "Migration rollback: repointing the proxies at the manual Secret"
-      for ns in "${CLIENT_NAMESPACES[@]}"; do
-        kc apply -k "$DEMO_DIR/k8s/clients/$ns" >/dev/null
-      done
-      for ns in "${CLIENT_NAMESPACES[@]}"; do
-        kc -n "$ns" rollout status deploy/temporal-proxy --timeout=300s
-        secret="$(kc -n "$ns" get deploy temporal-proxy -o jsonpath='{.spec.template.spec.volumes[?(@.name=="cloud-leaf")].secret.secretName}')"
-        [ "$secret" = "temporal-cloud-leaf-manual" ] || fail "$ns: proxies mount '$secret', expected temporal-cloud-leaf-manual"
-        log "PASS $ns: proxies mount temporal-cloud-leaf-manual"
-      done
-      state_set leaf_source manual
-    fi
+    [ -n "$old_issuer" ] || fail "no old issuer recorded in rotation-state"
+    log "Pointing role $PKI_ROLE back at $old_issuer"
+    vault_exec patch "$PKI_MOUNT/roles/$PKI_ROLE" issuer_ref="$old_issuer" >/dev/null
+    [ "$(role_issuer)" = "$old_issuer" ] || fail "role $PKI_ROLE does not read back $old_issuer"
+    log "PASS role $PKI_ROLE signs with $old_issuer"
+    log "Leaves move back at the next ESO refresh; run ./scripts/force-refresh.sh to move them now."
     state_set phase trusted
     grafana_annotate "Rollback: proxies back on the old CA; $issuer still trusted"
     log "Phase is trusted. Run rollback.sh again to remove $issuer from the Namespace."

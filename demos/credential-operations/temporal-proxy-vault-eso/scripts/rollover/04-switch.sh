@@ -5,17 +5,13 @@
 # CHANGES VAULT: the role's issuer_ref. Nothing else in the role changes
 # (vault patch). No Pod restarts and no Temporal Cloud change.
 #
-# Refuses unless step 3 verified the new CA in the Namespace. The first run
-# (moving off the manual CA) uses ./scripts/migrate-switch.sh instead.
+# Refuses unless step 3 verified the new CA in the Namespace.
 #
 # Idempotent: re-running after success re-verifies and changes nothing.
 #
 # Verify: the role reads back the new issuer, and the switch time is recorded.
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/common.sh"
 require_tools kubectl jq
-
-[ "$(state_get leaf_source)" = "vault" ] \
-  || fail "the proxies still use the manual CA; the first switch is ./scripts/migrate-switch.sh"
 
 issuer="$(state_get new_issuer)"
 phase="$(state_get phase)"

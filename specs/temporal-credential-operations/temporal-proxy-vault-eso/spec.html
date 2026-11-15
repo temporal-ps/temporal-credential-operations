@@ -27,6 +27,7 @@
         <li><a href="#split">Workers and Callers</a></li>
         <li><a href="#lifecycles">Two lifecycles</a></li>
         <li><a href="#why-proxy">What the proxy makes observable</a></li>
+        <li><a href="#with-without-proxy">With or without the proxy</a></li>
         <li><a href="#sequence">Rollover sequence</a></li>
         <li><a href="#gate">Retirement gate</a></li>
         <li><a href="#migration">Migration from today</a></li>
@@ -82,7 +83,9 @@ different rates:</p>
   new CA.</li>
 </ul>
 <p>Applications stop holding Temporal Cloud credentials at all. They connect to the
-proxy by its Kubernetes Service name; the proxy holds the leaf and makes it observable.</p>
+proxy by its Kubernetes Service name; the proxy holds the leaf and makes it observable.
+<a href="#with-without-proxy">With or without Temporal Proxy</a> compares this with
+delivering leaves to each application directly.</p>
 
 <div class="callout decision"><div class="title">What this asks of each team</div>
 <ul>
@@ -332,6 +335,57 @@ today by email or judgment into alerts routed to on-call.</p>
   </tbody>
 </table></div>
 
+<h3 id="with-without-proxy">With or without Temporal Proxy</h3>
+<p>The same Vault issuer and ESO delivery could feed each Worker and Caller directly,
+with no proxy. Short-lived leaves and a gated rollover still apply. What changes is
+everything downstream of the Secret: getting each new leaf into use, knowing which
+leaf each process presents, and what the rollover runner has to reach.</p>
+<div class="table-wrap"><table>
+  <thead><tr><th>Concern</th><th>Without a proxy: each Worker and Caller presents its own leaf</th><th>With Temporal Proxy</th></tr></thead>
+  <tbody>
+    <tr><td>Putting a new leaf into use</td>
+      <td>Every Worker and Caller Deployment restarts or redeploys through its own pipeline, in every cluster and region, on every renewal. Or every application implements TLS reload in its Temporal client, in each language and SDK it uses.</td>
+      <td>ESO writes the Secret and the proxy reloads it. Application Deployments do not change or restart.</td></tr>
+    <tr><td>How the work grows</td>
+      <td>With the number of Deployments times clusters times regions, split across separate Worker and Caller pipelines.</td>
+      <td>With the number of proxy Deployments: one per client namespace or cluster, with the same configuration everywhere.</td></tr>
+    <tr><td>Knowing which leaf each process presents</td>
+      <td>Each application exports its loaded leaf's expiry and reload outcome, consistently, in each language. The gate enumerates every application Pod.</td>
+      <td>One metric set from one component. The gate counts proxies.</td></tr>
+    <tr><td>Where the rollover runs and what it reaches</td>
+      <td>The runner, whether scripts or a RotateCredential Workflow, also triggers and watches redeploys in every pipeline, cluster, and region. It needs deploy access everywhere, and Acme must decide where it runs relative to all of them.</td>
+      <td>The runner reaches only Vault and Temporal Cloud. Each cluster pulls new leaves on its own; nothing pushes into application pipelines.</td></tr>
+    <tr><td>Where key material lives</td>
+      <td>In every application Pod, and in a Secret in every application namespace.</td>
+      <td>Only in proxy Pods. Applications hold no Temporal Cloud credential.</td></tr>
+    <tr><td>Components to operate</td>
+      <td>None added.</td>
+      <td>A proxy Deployment in each client cluster and region, on the call path: replicas, disruption budget, upgrades, and the alerts in <a href="#observability">Alerts</a>.</td></tr>
+    <tr><td>Later cross-cutting concerns</td>
+      <td>Each one is built into every application: payload encryption and its key handling, a codec server, Namespace endpoints, credential type.</td>
+      <td>Configured once at the proxy, which already supports payload encryption with key management service (KMS) envelope keys, a codec server for the Temporal CLI and Web UI, Namespace translation and routing, inbound authorization, and API key or mTLS upstream credentials.</td></tr>
+  </tbody>
+</table></div>
+<p>Running the proxy at scale is real work, and it puts a component on the call path.
+The proposal accepts that cost because the alternative spreads the same work across
+every application, pipeline, cluster, and region instead: redeploys or per-language
+reload logic, per-application metrics, and a rollover runner that must reach all of
+them. The proxy puts credential handling in one place, owned by the teams that already
+own Vault and Kubernetes, and later gives Acme one place to adopt other cross-cutting
+concerns (see <a href="#evolution">Evolution</a>).</p>
+<div class="callout decision"><div class="title">Evaluate Temporal Proxy</div>
+<p>We recommend that the Kubernetes and operations teams evaluate Temporal Proxy on its
+own merits, alongside this proposal:</p>
+<ul>
+  <li><a href="https://docs.temporal.io/production-deployment/temporal-proxy/">Temporal Proxy documentation</a></li>
+  <li><a href="https://github.com/temporalio/temporal-proxy">Source and README</a>: features, configuration, metrics, and the
+  <a href="https://github.com/temporalio/temporal-proxy/tree/main/examples/cloud">Temporal Cloud example</a></li>
+  <li><a href="https://github.com/temporalio/temporal-proxy/releases">Releases</a>: TLS hot reload and the metrics this
+  proposal depends on ship from v1.1.0; the demo runs code included in v1.2.0</li>
+  <li><a href="https://github.com/temporalio/helm-charts/tree/main/charts/temporal-proxy">Helm chart</a></li>
+  <li>Release stage: <a href="https://docs.temporal.io/evaluate/product-release-stages#public-preview">Public Preview</a></li>
+</ul></div>
+
 <h3 id="sequence">Rollover sequence</h3>
 <p>Each step has a precondition and a verification. A step whose precondition fails
 changes nothing; a step whose verification fails stops the rollover. Every step is
@@ -457,7 +511,9 @@ issuer. It is the only step in the design that restarts Pods.</p>
   <li><strong>Introduce the proxy with today's certificate.</strong> In the Worker
   cluster and the Caller cluster, each through its own pipeline, deploy the proxy
   mounting the existing certificate and key, then repoint Workers or Callers at it.
-  Nothing about trust changes.</li>
+  Nothing about trust changes. This works whether clients present a leaf signed by
+  today's CA or the CA certificate itself; see <a href="#questions">Open
+  Questions</a>.</li>
   <li><strong>Snapshot, create issuer, add trust.</strong> As steps 1 to 3. Today's CA
   is recorded as the old CA.</li>
   <li><strong>Switch (migration form).</strong> Apply the ESO resources, wait until
@@ -469,14 +525,44 @@ issuer. It is the only step in the design that restarts Pods.</p>
 </ol>
 
 <h3 id="observability">Alerts</h3>
+<p>Severity follows impact. Two alerts mean calls are failing now and page
+on-call: <strong>calls failing at the proxy</strong> and <strong>no proxy serving in a
+cluster</strong>. The rest fire while traffic is still healthy, because the proxy keeps
+serving its last valid leaf. They open a ticket: each is a deadline that says how
+long remains before calls start failing.</p>
 <div class="table-wrap"><table>
-  <thead><tr><th>Alert</th><th>Basis</th><th>Means</th></tr></thead>
+  <thead><tr><th>Alert</th><th>Severity</th><th>Fires when</th><th>Traffic now</th><th>Time until calls fail</th><th>First response</th></tr></thead>
   <tbody>
-    <tr><td>Leaf renewal stalled</td><td>Loaded leaf time to expiry below <em>L − 2R</em></td><td>Two refreshes missed: ESO, Vault, or Secret delivery is broken.</td></tr>
-    <tr><td>Proxy rejected new material</td><td><code>tmprl_proxy_tls_reloads_total{result="failure"}</code> increased</td><td>A bad leaf was delivered; the proxy keeps its previous one.</td></tr>
-    <tr><td>Proxy missing</td><td>Reporting proxies below each Deployment's replica count</td><td>A proxy is down or not scraped, and would also block the gate.</td></tr>
-    <tr><td>Calls failing at the proxy</td><td><code>tmprl_proxy_router_forwarding_errors_total</code> increased</td><td>Temporal Cloud or the network is rejecting the proxy's calls.</td></tr>
-    <tr><td>Issuer approaching expiry</td><td>Current issuer NotAfter, read from Vault, within the rollover lead time</td><td>Time to start a rollover. Not a proxy metric.</td></tr>
+    <tr><td>Leaf renewal stalled</td><td><span class="badge medium">Ticket</span></td>
+      <td>A loaded leaf has less than <em>L − 2R</em> left: two refreshes missed.</td>
+      <td>Healthy. The proxy presents its last valid leaf.</td>
+      <td>That leaf's remaining lifetime, at most <em>L − 2R</em>. Then Temporal Cloud rejects it, and a restarted proxy cannot start.</td>
+      <td>Walk the delivery chain backward: <code>ExternalSecret</code> status, ESO's Vault login, Vault availability. Force a refresh once fixed.</td></tr>
+    <tr><td>Proxy rejected new material</td><td><span class="badge medium">Ticket</span></td>
+      <td>A reload failed: the delivered certificate or key is unusable.</td>
+      <td>Healthy. The proxy keeps its previous leaf.</td>
+      <td>The previous leaf's remaining lifetime. Renewal stalled follows if every new leaf is rejected.</td>
+      <td>Inspect the Secret's contents and the ESO template that writes it.</td></tr>
+    <tr><td>Proxy missing</td><td><span class="badge medium">Ticket</span></td>
+      <td>Fewer proxies report a loaded leaf than their Deployments' replica count, but at least one still serves.</td>
+      <td>Reduced capacity; the remaining proxies serve. A rollover's gate cannot pass.</td>
+      <td>None while other replicas serve.</td>
+      <td>Check the Pods. A crash loop after a restart usually means an expired or rejected leaf.</td></tr>
+    <tr><td>No proxy serving in a cluster</td><td><span class="badge high">Page</span></td>
+      <td>Every proxy Pod in a cluster is down.</td>
+      <td><strong>Impaired.</strong> Calls from that cluster are failing. With no proxy running there are no forwarding errors, so this alert covers the case.</td>
+      <td>Now.</td>
+      <td>Check the Pods. If they crash loop on an expired leaf, restore delivery and force a refresh.</td></tr>
+    <tr><td>Calls failing at the proxy</td><td><span class="badge high">Page</span></td>
+      <td>The proxy's forwarding errors increased.</td>
+      <td><strong>Impaired.</strong> Calls from that cluster are failing.</td>
+      <td>Now.</td>
+      <td>Read the error reason: a TLS rejection points at an expired leaf or removed trust; anything else at the network or Temporal Cloud.</td></tr>
+    <tr><td>Issuer approaching expiry</td><td><span class="badge medium">Ticket</span></td>
+      <td>The current issuer expires within the rollover lead time. Read from Vault, not a proxy metric.</td>
+      <td>Healthy.</td>
+      <td>The issuer's remaining lifetime, less the time a rollover takes.</td>
+      <td>Start a CA rollover.</td></tr>
   </tbody>
 </table></div>
 
@@ -505,7 +591,7 @@ issuer. It is the only step in the design that restarts Pods.</p>
   <tbody>
     <tr><td>Temporal Proxy holds the client credential</td>
       <td>One process type per cluster presents, reloads, and reports the certificate. Applications need no TLS reload logic and no restarts; the gate has one metric to query.</td>
-      <td>Each Worker and Caller loads and reloads its own certificate. Every application must implement reload correctly, and nothing reports which certificate each process presents, so retirement stays a judgment call.</td></tr>
+      <td>Each Worker and Caller loads and reloads its own certificate. Every application must implement reload correctly, and nothing reports which certificate each process presents, so retirement stays a judgment call. Compared in <a href="#with-without-proxy">With or without Temporal Proxy</a>.</td></tr>
     <tr><td>Short-lived leaves from a long-lived Vault issuer</td>
       <td>Renewal no longer touches Temporal Cloud trust or people. The CA changes only at its own, much longer interval.</td>
       <td>Keep generating a new CA per renewal (today). Every renewal stays a trust change and a coordinated restart.</td></tr>
@@ -611,6 +697,8 @@ the rest.</p>
     <tr><td>Issuer expiry from Vault-side metrics</td><td>Vault metrics are already collected centrally.</td><td>Replaces the scheduled check that reads the issuer's NotAfter from Vault.</td></tr>
     <tr><td>Proxy listener TLS</td><td>Policy requires encryption or authentication between applications and the proxy inside the cluster.</td><td>Proxy and application configuration only; Temporal Cloud trust is unaffected.</td></tr>
     <tr><td>Other credential types at the proxy</td><td>Acme moves some Namespaces from mTLS to API keys.</td><td>The proxy's upstream configuration changes; applications do not. Not evaluated in this proposal.</td></tr>
+    <tr><td>Payload encryption at the proxy</td><td>Policy requires that Temporal Cloud store only encrypted payloads.</td><td>The proxy seals payloads with KMS-wrapped keys on the way to Temporal Cloud and serves a codec server for the CLI and Web UI. Applications keep their default data converter. Not evaluated in this proposal.</td></tr>
+    <tr><td>Inbound authorization at the proxy</td><td>Acme wants per-Namespace or per-method control over which applications may call what.</td><td>Token or JWKS validation, or an authorization extension server, on the proxy. Not evaluated in this proposal.</td></tr>
   </tbody>
 </table></div>
 
@@ -623,7 +711,7 @@ the rest.</p>
     <tr><td>The proxy becomes a single point of failure for Temporal traffic</td><td><span class="badge high">High</span></td><td><span class="badge low">Low</span></td><td>Multiple replicas, a PodDisruptionBudget, and the proxy-missing and forwarding-error alerts.</td></tr>
     <tr><td>ESO or Vault unavailable longer than <em>L − R</em></td><td><span class="badge high">High</span></td><td><span class="badge low">Low</span></td><td>Size <em>L</em> to exceed Vault's recovery objective. The renewal-stalled alert fires after two missed refreshes. A proxy restarted with an expired leaf refuses to start until ESO writes a valid one.</td></tr>
     <tr><td>Terraform restores a CA the rollover removed, or removes one it added</td><td><span class="badge high">High</span></td><td><span class="badge medium">Medium</span></td><td>Decide who owns accepted client CAs before the first rollover; see <a href="#questions">Open Questions</a>.</td></tr>
-    <tr><td>TLS hot reload is not in a tagged Temporal Proxy release</td><td><span class="badge medium">Medium</span></td><td><span class="badge high">High</span> (today)</td><td>The demo builds from a pinned main-branch commit. Production adoption waits for a release that includes hot reload and its metrics, or accepts a pinned build.</td></tr>
+    <tr><td>Temporal Proxy is in Public Preview; breaking changes between minor releases are possible</td><td><span class="badge medium">Medium</span></td><td><span class="badge medium">Medium</span></td><td>Pin a release (v1.1.0 or later has TLS hot reload and its metrics; v1.2.0 or later includes the code the demo ran), upgrade deliberately, and re-run the demo's renewal and rollover checks against each new version before adopting it.</td></tr>
     <tr><td>Metrics from Worker and Caller clusters are not queryable in one place</td><td><span class="badge medium">Medium</span></td><td><span class="badge medium">Medium</span></td><td>The gate needs a view of every proxy. Either centralize proxy metrics or evaluate the gate per cluster and combine the results.</td></tr>
     <tr><td>Ops API key misuse or leak</td><td><span class="badge high">High</span></td><td><span class="badge low">Low</span></td><td>Hold it only where the chosen execution option needs it, for as short a time as that option allows; use a service account with the narrowest role that can change accepted CAs.</td></tr>
   </tbody>
@@ -639,12 +727,14 @@ clusters, and a real Temporal Cloud Namespace. Results to date are recorded in
   <thead><tr><th>Claim</th><th>Demo evidence</th></tr></thead>
   <tbody>
     <tr><td>The proxy reloads a new leaf without a restart or failed call</td><td>Observed across consecutive ESO renewals.</td></tr>
-    <tr><td>Migration from a manual CA to a Vault issuer is a single rolling restart of the proxies</td><td>Observed.</td></tr>
-    <tr><td>The gate blocks retirement while any proxy is stale and names it</td><td>Implemented; full rollover and failure-injection run pending.</td></tr>
+    <tr><td>A full CA rollover (new issuer, add trust, switch, gate, retire) completes with no failed calls and no restarts</td><td>Observed: 186 seconds with demo timings; 0 of 184 probe calls failed across both client namespaces.</td></tr>
+    <tr><td>The gate blocks retirement while any proxy is stale and names it</td><td>Observed: with the Caller-side namespace's leaf delivery broken after the switch, retirement refused and named only its two proxies while the Worker-side proxies passed. After delivery was restored the rollover completed; 0 of 244 probe calls failed throughout.</td></tr>
   </tbody>
 </table></div>
-<p>The demo does not prove multi-cluster behavior, production Vault authentication,
-Acme's lifetime policy, or proxy behavior under production load.</p>
+<p>The demo starts in the proposed end state, with Vault issuing every leaf. It does
+not demonstrate the <a href="#migration">migration from today</a>, multi-cluster
+behavior, production Vault authentication, Acme's lifetime policy, or proxy behavior
+under production load.</p>
 
 <!-- ============================================================ -->
 <h2 id="deliverables">Deliverables</h2>
@@ -679,6 +769,10 @@ Acme's lifetime policy, or proxy behavior under production load.</p>
 <h2 id="questions">Open Questions</h2>
 <h3>Needed before production adoption</h3>
 <ul class="checklist">
+  <li>OPEN QUESTION: What clients present today. Do Workers and Callers present a
+  client certificate signed by the current CA, or the CA certificate itself? Either
+  can be mounted in the proxy for the migration; the answer changes what the
+  inventory looks for.</li>
   <li>OPEN QUESTION: Client inventory. Which Workers and Callers, in which clusters,
   present certificates signed by the current CA? Do Callers share the Workers' CA?</li>
   <li>OPEN QUESTION: Ownership of accepted client CAs. Does Terraform Enterprise stop
@@ -707,6 +801,8 @@ Acme's lifetime policy, or proxy behavior under production load.</p>
 <!-- ============================================================ -->
 <h2 id="references">References &amp; Links</h2>
 <ul>
+  <li><a href="https://docs.temporal.io/production-deployment/temporal-proxy/">Temporal Proxy documentation</a></li>
+  <li><a href="https://github.com/temporalio/temporal-proxy">Temporal Proxy source and README</a></li>
   <li><a href="https://docs.temporal.io/cloud/certificates">Temporal Cloud certificate management</a></li>
   <li><a href="https://docs.temporal.io/cloud/tcld/namespace">tcld namespace commands</a></li>
   <li><a href="https://developer.hashicorp.com/vault/docs/secrets/pki">Vault PKI secrets engine</a></li>

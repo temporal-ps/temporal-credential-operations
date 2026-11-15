@@ -95,17 +95,6 @@ repo_path() {
   esac
 }
 
-# Bootstrap (manually generated) client CA certificate and key, gitignored.
-MANUAL_CERT_FILE="$(repo_path "${TEMPORAL_DEMO_CA_CERT_FILE:-}")"
-MANUAL_KEY_FILE="$(repo_path "${TEMPORAL_DEMO_CA_KEY_FILE:-}")"
-
-require_demo_ca() {
-  [ -n "$MANUAL_CERT_FILE" ] || fail "TEMPORAL_DEMO_CA_CERT_FILE is not set in .env.local"
-  [ -n "$MANUAL_KEY_FILE" ] || fail "TEMPORAL_DEMO_CA_KEY_FILE is not set in .env.local"
-  [ -f "$MANUAL_CERT_FILE" ] || fail "missing $MANUAL_CERT_FILE (TEMPORAL_DEMO_CA_CERT_FILE)"
-  [ -f "$MANUAL_KEY_FILE" ] || fail "missing $MANUAL_KEY_FILE (TEMPORAL_DEMO_CA_KEY_FILE)"
-}
-
 # Derive the Temporal Cloud endpoint and fully qualified Namespace from
 # TEMPORAL_DEMO_NAMESPACE_ADDRESS (<namespace>.<account>.tmprl.cloud:7233).
 resolve_target() {
@@ -216,6 +205,74 @@ role_issuer() {
 # PEM certificate of a Vault issuer.
 issuer_cert() {
   vault_exec read -format=json "$PKI_MOUNT/issuer/$1" | jq -r '.data.certificate'
+}
+
+# Create issuer ca-<UTC timestamp> with a key generated and kept inside Vault
+# (root/generate/internal: the response carries no key). Prints its name.
+create_issuer() {
+  local issuer
+  issuer="ca-$(date -u +%Y%m%dT%H%M%SZ)"
+  vault_exec write -format=json "$PKI_MOUNT/root/generate/internal" \
+    common_name="Acme Temporal client CA $issuer" \
+    organization="Acme" \
+    issuer_name="$issuer" key_name="key-$issuer" \
+    key_type=ec key_bits=256 ttl="$ISSUER_TTL" >/dev/null
+  printf '%s\n' "$issuer"
+}
+
+# Export an issuer's public certificate to $STATE_DIR/<issuer>.pem, check it is
+# a CA certificate with no private key, and print the path.
+export_issuer_pem() {
+  local issuer="$1" pem
+  mkdir -p "$STATE_DIR"
+  pem="$STATE_DIR/$issuer.pem"
+  issuer_cert "$issuer" > "$pem"
+  openssl x509 -in "$pem" -noout -text | grep -q 'CA:TRUE' || fail "$pem is not a CA certificate"
+  ! grep -q 'PRIVATE KEY' "$pem" || fail "$pem contains a private key"
+  printf '%s\n' "$pem"
+}
+
+# Create the temporal-client role pointing at an issuer. Leaf lifetime from
+# demo-settings.env (LEAF_TTL); client auth only; demo common names only.
+create_pki_role() {
+  vault_exec write "$PKI_MOUNT/roles/$PKI_ROLE" \
+    issuer_ref="$1" \
+    ttl="$LEAF_TTL_SECONDS" max_ttl="$LEAF_TTL_SECONDS" \
+    key_type=ec key_bits=256 \
+    client_flag=true server_flag=false \
+    allowed_domains="workers.temporal-proxy,callers.temporal-proxy" \
+    allow_bare_domains=true allow_subdomains=false allow_localhost=false \
+    enforce_hostnames=false \
+    no_store=true generate_lease=false >/dev/null
+}
+
+# Prove the Namespace accepts leaves from an issuer: complete a call with a
+# 5-minute test leaf, retrying until the epoch deadline while a CA change
+# propagates. The test key exists only in a private temporary directory.
+prove_issuer_accepted() {
+  local issuer="$1" deadline="$2" work attempt=0
+  work="$(mktemp -d)"
+  chmod 700 "$work"
+  vault_exec write -format=json "$PKI_MOUNT/issuer/$issuer/issue/$PKI_ROLE" \
+    common_name=workers.temporal-proxy ttl=5m > "$work/out.json"
+  (umask 077
+   jq -r '.data.certificate' "$work/out.json" > "$work/leaf.crt"
+   jq -r '.data.private_key' "$work/out.json" > "$work/leaf.key")
+  rm -f "$work/out.json"
+  until temporal workflow count \
+      --address "$TEMPORAL_CLOUD_ENDPOINT" --namespace "$TEMPORAL_NAMESPACE" \
+      --tls-cert-path "$work/leaf.crt" --tls-key-path "$work/leaf.key" \
+      --command-timeout 10s >/dev/null 2>&1; do
+    attempt=$((attempt + 1))
+    if [ "$(now_epoch)" -ge "$deadline" ]; then
+      rm -rf "$work"
+      fail "a leaf from $issuer is still rejected by $TEMPORAL_NAMESPACE"
+    fi
+    [ $((attempt % 6)) -ne 1 ] || log "  waiting for $TEMPORAL_NAMESPACE to accept leaves from $issuer"
+    sleep 10
+  done
+  rm -rf "$work"
+  log "PASS a test leaf from $issuer is accepted by $TEMPORAL_NAMESPACE"
 }
 
 # --- Retirement gate -----------------------------------------------------------

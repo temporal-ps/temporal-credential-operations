@@ -35,8 +35,9 @@ This repository shows a different arrangement:
 
 ## Try the demo
 
-You need Docker, a Temporal Cloud Namespace dedicated to the demo, a CA
-certificate and key it accepts, and a Temporal Cloud Operations API key.
+You need Docker, a Temporal Cloud Namespace dedicated to the demo (using
+mTLS), and a Temporal Cloud Operations API key. The demo creates its own CA in
+Vault and makes the Namespace trust it.
 
 ```bash
 cp .env.example .env.local    # then fill it in

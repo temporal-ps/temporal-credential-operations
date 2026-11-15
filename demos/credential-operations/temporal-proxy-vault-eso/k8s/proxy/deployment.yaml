@@ -73,10 +73,9 @@ spec:
             name: temporal-proxy-config
         - name: cloud-leaf
           secret:
-            # Before migration: the manually generated bootstrap material.
-            # scripts/migrate-switch.sh applies k8s/clients-vault, which
-            # repoints this at the ESO-managed temporal-cloud-leaf.
-            secretName: temporal-cloud-leaf-manual
+            # Written by ESO from Vault PKI every refresh interval
+            # (k8s/eso-clients).
+            secretName: temporal-cloud-leaf
 ---
 apiVersion: v1
 kind: Service

@@ -27,7 +27,7 @@ L="$LEAF_TTL_SECONDS"
 duration_seconds "$ISSUER_TTL" >/dev/null
 log "Settings: refresh ${ESO_REFRESH_INTERVAL}, leaf TTL ${LEAF_TTL}, gate skew ${GATE_SKEW_SECONDS}s, issuer TTL ${ISSUER_TTL}"
 
-# Vault role (exists after the first 02-create-issuer.sh run).
+# Vault role (created by bootstrap-issuer.sh, run from up.sh).
 if kc -n "$VAULT_NAMESPACE" get pod vault-0 >/dev/null 2>&1 \
    && vault_exec read "$PKI_MOUNT/roles/$PKI_ROLE" >/dev/null 2>&1; then
   vault_exec patch "$PKI_MOUNT/roles/$PKI_ROLE" ttl="$L" max_ttl="$L" >/dev/null
@@ -35,7 +35,7 @@ if kc -n "$VAULT_NAMESPACE" get pod vault-0 >/dev/null 2>&1 \
   [ "$got" = "$L $L" ] || fail "role $PKI_ROLE reads back ttl/max_ttl '$got', expected '$L $L'"
   log "PASS role $PKI_ROLE ttl=max_ttl=${L}s"
 else
-  log "INFO role $PKI_ROLE not created yet; 02-create-issuer.sh creates it with LEAF_TTL"
+  log "INFO role $PKI_ROLE not created yet; bootstrap-issuer.sh creates it with LEAF_TTL"
 fi
 
 # ExternalSecrets (exist once ESO resources are applied).
@@ -53,8 +53,9 @@ if kc get namespace "$OBSERVABILITY_NAMESPACE" >/dev/null 2>&1; then
     if kc -n "$OBSERVABILITY_NAMESPACE" get deploy prometheus >/dev/null 2>&1; then
       kc -n "$OBSERVABILITY_NAMESPACE" rollout restart deploy/prometheus >/dev/null
       kc -n "$OBSERVABILITY_NAMESPACE" rollout status deploy/prometheus --timeout=180s >/dev/null
+      want_rules="$(grep -c '^ *- alert:' <<<"$rendered")"
       deadline=$(( $(now_epoch) + 60 ))
-      until [ "$(prom_query_api rules | jq '[.data.groups[].rules[]] | length' 2>/dev/null)" = "4" ]; do
+      until [ "$(prom_query_api rules | jq '[.data.groups[].rules[]] | length' 2>/dev/null)" = "$want_rules" ]; do
         [ "$(now_epoch)" -lt "$deadline" ] || fail "Prometheus did not load the alert rules"
         sleep 3
       done

@@ -16,8 +16,10 @@ Temporal Proxy hot reload.
 
 The demo runs on one k3d cluster (Vault dev mode, ESO, two Temporal Proxy
 deployments, Prometheus, Grafana) against a real Temporal Cloud Namespace,
-starting from a manually generated CA and migrating to a Vault issuer on the
-first run.
+starting on Vault: setup creates the first issuer and makes the dedicated
+Namespace trust it. Milestones 1 and 2 below were built on an earlier design
+that started from a manually generated CA and migrated; that stage was removed
+on 2026-11-15 (see Feedback Items).
 
 ## Milestone 1 Log
 
@@ -133,8 +135,9 @@ CLI runs inside the Vault Pod, so operators need no local Vault install.
       Vault PKI issuance, which the rotation depends on.
 - [x] The demo may remove the bootstrap CA: the demo Namespace is dedicated
       to the demo (2026-11-14, user direction).
-- [ ] Milestone 3: `bootstrap-manual.sh` re-adds the bootstrap CA when a
-      previous run retired it; `06-retire.sh` removes it like any old CA.
+- [x] Run `up.sh` on a new cluster (2026-11-15): `bootstrap-issuer.sh`
+      replaced the Namespace's two accepted CAs with `ca-20261115T054439Z`,
+      a test leaf was accepted, and the proxies started on ESO leaves.
 - [x] Sample traffic Workflow is Java (2026-11-13, user direction). The
       rotation is runbook scripts in this demo.
 - [x] Temporal Proxy routing for Namespace-less system calls with one
@@ -192,11 +195,69 @@ CLI runs inside the Vault Pod, so operators need no local Vault install.
   Kubernetes, and metrics APIs directly rather than shelling out to `tcld`,
   the Vault CLI, or `kubectl`. Conforming clarification in the proposal's
   execution options and evolution sections.
+- 2026-11-15 (user): The demo does not need to show the customer's current
+  handling, only the proposal. Design change: the demo starts on Vault.
+  `up.sh` now installs Vault and ESO and runs `bootstrap-issuer.sh`, which
+  creates the first issuer and, on a new cluster, replaces the dedicated
+  Namespace's accepted CAs with it (`tcld accepted-client-ca set`). Proxies
+  mount the ESO Secret from their first start. Removed: the bootstrap CA
+  inputs, `bootstrap-manual.sh`, `migrate-switch.sh`, `rotate-manual-leaf.sh`,
+  `verify-migration.sh`, `k8s/clients-vault`, and every manual-CA branch in
+  the rollover scripts. `verify-proxies.sh` absorbs the ESO checks from
+  `verify-migration.sh`. The proposal keeps its migration section (the
+  customer's real path) and adds an open question: do clients present a leaf
+  or the CA certificate itself? Verified on a new cluster: `up.sh` exit 0,
+  `verify-proxies.sh` passes (4 of 4 proxies, 0 failed probe calls), and
+  `watch-renewals.sh 3` passes (every replica loaded 3 renewals 8 to 28 s
+  after each ESO refresh, no restarts, 0 of 115 probe calls failed per
+  namespace). `verify-proxies.sh` now waits up to 60 s for Prometheus's first
+  scrape of new Pods; without it, the first run right after `up.sh` saw 2 of
+  4 proxies.
+- 2026-11-15: `verify-proxies.sh` failed after migration with "gauge NotAfter
+  != mounted certificate": with a 1-minute refresh the Secret changes faster
+  than kubelet sync plus the proxy's poll, so proxies trail it by 59 to 157 s
+  (sampled). It now allows up to 200 s of reload lag for the ESO Secret.
+- 2026-11-15: First `demo-rollover.sh` stopped at preflight, changing
+  nothing: the leaf-remaining check required more than 300 s while
+  `LEAF_TTL` is 300 s, a leftover from the 30-minute default. It now defaults
+  to one ESO refresh interval. Re-run passed in 186 s (add trust 18 s,
+  verify 111 s, retire 39 s): `ca-20261115T054439Z` replaced by
+  `ca-20261115T055218Z`, the Namespace trusts only the new CA, the old
+  issuer refuses to sign, 0 of 92 probe calls failed per namespace across
+  the rollover, no proxy restarts, no reload failures. Still to run: the
+  failure-injection walkthrough and `rollback.sh`.
+- 2026-11-15: Failure-injection walkthrough passed. Steps 0 to 4, then
+  `inject-eso-failure.sh callers`, `force-refresh.sh workers` (now takes
+  namespaces), workers moved in about 2 minutes, `06-retire.sh` refused and
+  named only the two callers proxies and the callers Secret, removing
+  nothing. Restore, `05-verify.sh` passed in about 1 minute, `06-retire.sh`
+  completed; 0 of 122 probe calls failed per namespace. Bugs found and
+  fixed on the way: `02-create-issuer.sh` reused the previous rollover's
+  issuer on any second rollover and recorded state before its own check
+  refused; `apply-settings.sh` expected exactly 4 alert rules; preflight
+  did not wait for Prometheus's first scrape. Alert severities now follow
+  impact (page: calls failing, no proxy serving; ticket: deadlines) and a
+  page was added for "no proxy serving in a cluster". Renewal-stalled can
+  go pending on a healthy but slow-reloading workers proxy: the demo's
+  threshold (L - 2R = 180 s) does not allow for reload lag (up to about
+  150 s). Accepted as a demo artifact (decision: keep 5-minute leaves and
+  the current threshold); with production lifetimes the lag is negligible.
+- 2026-11-15 (user): the proposal lacked a comparison with not using the
+  proxy (redeploying and monitoring every Worker and Caller across clusters
+  and regions, and deciding where the rollover runs), and should encourage
+  evaluating the proxy with clear links. Conforming change: `spec.html`
+  gains "With or without Temporal Proxy" with an evaluation callout and
+  links, two Evolution rows (payload encryption, inbound authorization),
+  and proxy references. TLS hot reload and its metrics shipped in Temporal
+  Proxy v1.1.0, and v1.2.0 contains the demo's pinned commit, so the "hot
+  reload not in a tagged release" risk became a Public Preview risk. Open: the demo and `demo-spec.html` still describe building
+  from the pinned commit; moving them to v1.2.0 needs a rebuild and re-run.
 
 ## Roadmap
 
-1. Proxy path with manual CA, CLI probes, metrics, dashboard.
-2. Vault PKI, ESO, migration run, observed renewals.
+1. Proxy path on Vault from `up.sh`: Vault PKI, ESO, first issuer and
+   trust, CLI probes, metrics, dashboard, observed renewals.
+2. (Merged into 1 when the manual-CA stage was removed.)
 3. Rollover scripts, failure injection, annotations.
 4. Sample Workflow replacing the probes.
 5. Runbook text from actual script output.

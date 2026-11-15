@@ -3,9 +3,9 @@
 #
 # CHANGES TEMPORAL CLOUD: removes the Snapshot's old CA from the Namespace's
 # accepted client CAs. It is the only CA any script removes, and only after
-# the gate passes again here. CHANGES VAULT: if the old CA is a Vault issuer,
-# sets its usage to read-only,crl-signing so it can no longer sign leaves
-# (kept, not deleted, for audit and rollback).
+# the gate passes again here. CHANGES VAULT: sets the old issuer's usage to
+# read-only,crl-signing so it can no longer sign leaves (kept, not deleted,
+# for audit and rollback).
 #
 # Refuses unless the switch happened and the gate passes when evaluated here,
 # naming every failing check (for example a proxy still on a pre-switch leaf).
@@ -16,7 +16,7 @@
 #
 # Verify:
 #   1. Accepted CAs equal Snapshot - old + new.
-#   2. The old Vault issuer refuses to sign (skipped for the manual CA).
+#   2. The old Vault issuer refuses to sign.
 #   3. Probes keep succeeding for RETIRE_PROBE_SECONDS after the removal.
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/common.sh"
 require_tools kubectl tcld jq openssl
@@ -35,6 +35,7 @@ esac
 old_fp="$(state_get old_ca_fingerprint)"
 new_fp="$(state_get new_ca_fingerprint)"
 old_issuer="$(state_get old_issuer)"
+[ -n "$old_issuer" ] || fail "no old issuer recorded; re-run 01-snapshot.sh"
 snapshot="$(state_get accepted_cas | tr ',' '\n' | sort)"
 before="$(printf '%s\n%s\n' "$snapshot" "$new_fp" | grep -v '^$' | sort -u)"
 after="$(printf '%s\n' "$before" | grep -vx "$old_fp" | sort -u)"
@@ -68,16 +69,12 @@ until [ "$(accepted_ca_fingerprints)" = "$after" ]; do
 done
 log "PASS accepted CAs = Snapshot - old + new ($(paste -sd, - <<<"$after"))"
 
-if [ -n "$old_issuer" ]; then
-  vault_exec patch "$PKI_MOUNT/issuer/$old_issuer" usage=read-only,crl-signing >/dev/null
-  if vault_exec write -format=json "$PKI_MOUNT/issuer/$old_issuer/issue/$PKI_ROLE" \
-       common_name=workers.temporal-proxy ttl=1m >/dev/null 2>&1; then
-    fail "old issuer $old_issuer still signs leaves"
-  fi
-  log "PASS old issuer $old_issuer refuses to sign (usage read-only,crl-signing)"
-else
-  log "INFO old CA was the manual bootstrap CA; nothing to disable in Vault"
+vault_exec patch "$PKI_MOUNT/issuer/$old_issuer" usage=read-only,crl-signing >/dev/null
+if vault_exec write -format=json "$PKI_MOUNT/issuer/$old_issuer/issue/$PKI_ROLE" \
+     common_name=workers.temporal-proxy ttl=1m >/dev/null 2>&1; then
+  fail "old issuer $old_issuer still signs leaves"
 fi
+log "PASS old issuer $old_issuer refuses to sign (usage read-only,crl-signing)"
 
 log "Watching probes for ${PROBE_SECONDS}s after the removal"
 sleep "$PROBE_SECONDS"

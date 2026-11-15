@@ -2,14 +2,15 @@
 # Install Vault (dev mode) and External Secrets Operator (ESO) from
 # pinned Helm charts, then configure Vault for the demo:
 #
-#   - PKI secrets engine at pki-temporal (no issuer yet; 02-create-issuer.sh
-#     creates issuers and, on the first run, the temporal-client role).
+#   - PKI secrets engine at pki-temporal (no issuer yet; bootstrap-issuer.sh
+#     creates the first issuer and the temporal-client role).
 #   - Policy temporal-client-issue: only "update" on
 #     pki-temporal/issue/temporal-client.
 #   - Kubernetes auth with one role per client namespace (<ns>-pki), bound to
 #     that namespace's vault-pki-client service account.
 #
-# Changes nothing in the proxies or in Temporal Cloud. Idempotent.
+# Called by up.sh. Changes nothing in the proxies or in Temporal Cloud.
+# Idempotent.
 #
 # Verify: the script ends by logging in to Vault as each namespace's service
 # account and checking that the token carries only the issue policy.
@@ -76,6 +77,4 @@ for ns in "${CLIENT_NAMESPACES[@]}"; do
   log "PASS $ns: vault-pki-client logs in to Vault with policies $policies"
 done
 
-"$DEMO_DIR/scripts/apply-settings.sh"
-
-log "Vault and ESO ready. Next: ./scripts/rollover/01-snapshot.sh"
+log "Vault and ESO ready."

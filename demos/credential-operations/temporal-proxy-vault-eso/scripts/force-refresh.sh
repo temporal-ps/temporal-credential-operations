@@ -3,6 +3,8 @@
 # namespace, instead of waiting for the refresh interval. Used for an
 # emergency rollover, and to shorten demos.
 #
+# Usage: ./scripts/force-refresh.sh [namespace ...]   (default: all client namespaces)
+#
 # ESO refreshes an ExternalSecret when its force-sync annotation changes.
 #
 # Verify (exits non-zero otherwise): each ExternalSecret's status.refreshTime
@@ -15,7 +17,10 @@ serial_of() {
     | openssl x509 -noout -serial | cut -d= -f2
 }
 
-for ns in "${CLIENT_NAMESPACES[@]}"; do
+namespaces=("$@")
+[ "${#namespaces[@]}" -gt 0 ] || namespaces=("${CLIENT_NAMESPACES[@]}")
+for ns in "${namespaces[@]}"; do
+  case " ${CLIENT_NAMESPACES[*]} " in *" $ns "*) ;; *) fail "unknown client namespace '$ns'" ;; esac
   before_time="$(kc -n "$ns" get externalsecret temporal-cloud-leaf -o jsonpath='{.status.refreshTime}')"
   before_serial="$(serial_of "$ns")"
   kc -n "$ns" annotate externalsecret temporal-cloud-leaf force-sync="$(now_epoch)" --overwrite >/dev/null

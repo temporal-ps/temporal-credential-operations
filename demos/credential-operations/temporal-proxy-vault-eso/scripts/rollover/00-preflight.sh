@@ -17,30 +17,25 @@ require_tools kubectl jq openssl tcld temporal
 resolve_target
 use_ops_api_key
 
-MIN_LEAF_REMAINING="${MIN_LEAF_REMAINING:-300}"   # seconds
+# A loaded leaf normally has between about LEAF_TTL - ESO refresh - reload lag
+# and LEAF_TTL left. Less than one refresh interval means renewal has stalled
+# (for example after the host slept), so refuse to start a rollover.
+MIN_LEAF_REMAINING="${MIN_LEAF_REMAINING:-$ESO_REFRESH_SECONDS}"   # seconds
 
 kc get namespace "$VAULT_NAMESPACE" >/dev/null || fail "cluster $KUBE_CONTEXT is not reachable"
 log "PASS cluster $KUBE_CONTEXT reachable"
 
-leaf_source="$(state_get leaf_source)"
-leaf_source="${leaf_source:-manual}"
 phase="$(state_get phase)"
-log "INFO leaf source: $leaf_source; rollover phase: ${phase:-none}"
+log "INFO rollover phase: ${phase:-none}"
 
 vault_exec status >/dev/null || fail "Vault is not reachable or is sealed"
 log "PASS Vault reachable and unsealed"
 
-if [ "$leaf_source" = "manual" ]; then
-  require_demo_ca
-  current_fp="$(cert_sha1 < "$MANUAL_CERT_FILE")"
-  current_desc="bootstrap CA"
-else
-  issuer="$(role_issuer)"
-  [ -n "$issuer" ] && [ "$issuer" != "null" ] || fail "role $PKI_MOUNT/roles/$PKI_ROLE has no issuer"
-  current_fp="$(issuer_cert "$issuer" | cert_sha1)"
-  current_desc="Vault issuer $issuer"
-  log "PASS role $PKI_ROLE signs with $issuer"
-fi
+issuer="$(role_issuer)"
+[ -n "$issuer" ] && [ "$issuer" != "null" ] || fail "role $PKI_MOUNT/roles/$PKI_ROLE has no issuer; run ./scripts/up.sh"
+current_fp="$(issuer_cert "$issuer" | cert_sha1)"
+current_desc="Vault issuer $issuer"
+log "PASS role $PKI_ROLE signs with $issuer"
 
 ns_json="$(tcld namespace get -n "$TEMPORAL_NAMESPACE")"
 auth="$(jq -r '.spec.authMethod // empty' <<<"$ns_json")"
@@ -63,12 +58,19 @@ for ns in "${CLIENT_NAMESPACES[@]}"; do
 done
 log "PASS every proxy Deployment Ready ($expected replicas)"
 
-ready_pods="$(ready_proxy_pods | jq -R . | jq -sc .)"
-series="$(prom_query 'tmprl_proxy_tls_cert_expiry_timestamp_seconds{file="cert"}' \
-  | jq --argjson ready "$ready_pods" \
-    '[.data.result[] | select(("\(.metric.namespace)/\(.metric.pod)") as $p | $ready | index($p))]')"
-count="$(jq 'length' <<<"$series")"
-[ "$count" -eq "$expected" ] || fail "$count of $expected Ready proxies report a loaded leaf"
+# A new Pod, or a restarted Prometheus, may not have scraped every proxy yet.
+SCRAPE_WAIT_SECONDS="${SCRAPE_WAIT_SECONDS:-60}"
+scrape_deadline=$(( $(now_epoch) + SCRAPE_WAIT_SECONDS ))
+while :; do
+  ready_pods="$(ready_proxy_pods | jq -R . | jq -sc .)"
+  series="$(prom_query 'tmprl_proxy_tls_cert_expiry_timestamp_seconds{file="cert"}' \
+    | jq --argjson ready "$ready_pods" \
+      '[.data.result[] | select(("\(.metric.namespace)/\(.metric.pod)") as $p | $ready | index($p))]')"
+  count="$(jq 'length' <<<"$series")"
+  [ "$count" -lt "$expected" ] && [ "$(now_epoch)" -lt "$scrape_deadline" ] || break
+  sleep 5
+done
+[ "$count" -eq "$expected" ] || fail "$count of $expected Ready proxies report a loaded leaf after ${SCRAPE_WAIT_SECONDS}s"
 log "PASS $count of $expected proxies report a loaded leaf"
 
 short="$(jq -r --argjson min "$(( $(now_epoch) + MIN_LEAF_REMAINING ))" \
@@ -81,8 +83,6 @@ failures="$(prom_query 'sum(increase(tmprl_proxy_tls_reloads_total{result="failu
 [ "$failures" = "0" ] || fail "$failures TLS reload failures in the last 15 minutes"
 log "PASS no TLS reload failures in the last 15 minutes"
 
-if [ "$leaf_source" = "vault" ]; then
-  "$(dirname "${BASH_SOURCE[0]}")/../check-issuer-expiry.sh"
-fi
+"$(dirname "${BASH_SOURCE[0]}")/../check-issuer-expiry.sh"
 
 log "Preflight passed."

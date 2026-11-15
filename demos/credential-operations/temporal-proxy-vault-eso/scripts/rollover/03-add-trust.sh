@@ -55,29 +55,7 @@ until [ "$(accepted_ca_fingerprints)" = "$want" ]; do
 done
 log "PASS accepted CAs = Snapshot + $new_fp ($(paste -sd, - <<<"$want"))"
 
-# Handshake check with a short-lived test leaf. The key exists only in a
-# private temporary directory for the duration of the check.
-work="$(mktemp -d)"
-chmod 700 "$work"
-trap 'rm -f "$work/leaf.crt" "$work/leaf.key" "$work/out.json"; rmdir "$work"' EXIT
-vault_exec write -format=json "$PKI_MOUNT/issuer/$issuer/issue/$PKI_ROLE" \
-  common_name=workers.temporal-proxy ttl=5m > "$work/out.json"
-(umask 077
- jq -r '.data.certificate' "$work/out.json" > "$work/leaf.crt"
- jq -r '.data.private_key' "$work/out.json" > "$work/leaf.key")
-rm -f "$work/out.json"
-
-attempt=0
-until temporal workflow count \
-    --address "$TEMPORAL_CLOUD_ENDPOINT" --namespace "$TEMPORAL_NAMESPACE" \
-    --tls-cert-path "$work/leaf.crt" --tls-key-path "$work/leaf.key" \
-    --command-timeout 10s >/dev/null 2>&1; do
-  attempt=$((attempt + 1))
-  [ "$(now_epoch)" -lt "$deadline" ] || fail "a leaf from $issuer is still rejected by $TEMPORAL_NAMESPACE after ${PROPAGATION_TIMEOUT}s"
-  [ $((attempt % 6)) -ne 1 ] || log "  waiting for $TEMPORAL_NAMESPACE to accept leaves from $issuer"
-  sleep 10
-done
-log "PASS a test leaf from $issuer is accepted by $TEMPORAL_NAMESPACE"
+prove_issuer_accepted "$issuer" "$deadline"
 
 state_set phase trusted
 state_set trust_verified_time "$(date -u +%FT%TZ)"
