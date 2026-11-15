@@ -7,27 +7,29 @@
 # sets its usage to read-only,crl-signing so it can no longer sign leaves
 # (kept, not deleted, for audit and rollback).
 #
-# Refuses unless step 5 passed, and refuses if the accepted CAs differ from
-# Snapshot + new (a concurrent change must be reviewed first).
+# Refuses unless the switch happened and the gate passes when evaluated here,
+# naming every failing check (for example a proxy still on a pre-switch leaf).
+# Refuses if the accepted CAs differ from Snapshot + new (a concurrent change
+# must be reviewed first).
 #
 # Idempotent: skips the removal if the old CA is already gone.
 #
 # Verify:
 #   1. Accepted CAs equal Snapshot - old + new.
 #   2. The old Vault issuer refuses to sign (skipped for the manual CA).
-#   3. Probes keep succeeding for PROBE_SECONDS after the removal.
+#   3. Probes keep succeeding for RETIRE_PROBE_SECONDS after the removal.
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/common.sh"
 require_tools kubectl tcld jq openssl
 resolve_target
 use_ops_api_key
 
 PROPAGATION_TIMEOUT="${PROPAGATION_TIMEOUT:-900}"   # seconds
-PROBE_SECONDS="${PROBE_SECONDS:-90}"
+PROBE_SECONDS="$RETIRE_PROBE_SECONDS"
 
 phase="$(state_get phase)"
 case "$phase" in
-  verified|retired) ;;
-  *) fail "expected phase verified (run 05-verify.sh), found '${phase:-none}'" ;;
+  switched|verified|retired) ;;
+  *) fail "expected phase verified (run 04-switch.sh and 05-verify.sh), found '${phase:-none}'" ;;
 esac
 
 old_fp="$(state_get old_ca_fingerprint)"

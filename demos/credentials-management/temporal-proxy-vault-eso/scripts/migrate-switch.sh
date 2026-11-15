@@ -29,6 +29,8 @@ pem="$STATE_DIR/$issuer.pem"
 
 for ns in "${CLIENT_NAMESPACES[@]}"; do
   kc apply -k "$DEMO_DIR/k8s/eso-clients/$ns" >/dev/null
+  kc -n "$ns" patch externalsecret temporal-cloud-leaf --type merge \
+    -p "{\"spec\":{\"refreshInterval\":\"$ESO_REFRESH_INTERVAL\"}}" >/dev/null
   kc -n "$ns" wait --for=condition=Ready externalsecret/temporal-cloud-leaf --timeout=120s >/dev/null \
     || { kc -n "$ns" describe externalsecret temporal-cloud-leaf | tail -15 >&2; fail "$ns: ExternalSecret not Ready"; }
   crt="$(kc -n "$ns" get secret temporal-cloud-leaf -o jsonpath='{.data.tls\.crt}' | base64 -d)"
@@ -43,6 +45,7 @@ switch_time="$(state_get switch_time)"
 for ns in "${CLIENT_NAMESPACES[@]}"; do
   kc apply -k "$DEMO_DIR/k8s/clients-vault/$ns" >/dev/null
 done
+apply_eso_refresh_interval
 for ns in "${CLIENT_NAMESPACES[@]}"; do
   kc -n "$ns" rollout status deploy/temporal-proxy --timeout=300s
 done

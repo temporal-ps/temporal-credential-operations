@@ -3,14 +3,14 @@
 # with expires within the rollover lead time. Issuer expiry is not a proxy
 # metric, so run this on a schedule (production: or use a Vault-side metric).
 #
-# Usage: ./scripts/check-issuer-expiry.sh   (LEAD_DAYS, default 30)
+# Usage: ./scripts/check-issuer-expiry.sh   (ISSUER_LEAD_DAYS in demo-settings.env)
 #
 # Read only. Verify: prints PASS and exits 0 when the issuer outlives the
 # lead time; exits non-zero naming the issuer and its NotAfter otherwise.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 require_tools kubectl jq openssl
 
-LEAD_DAYS="${LEAD_DAYS:-30}"
+LEAD_DAYS="$ISSUER_LEAD_DAYS"
 
 issuer="$(role_issuer)"
 [ -n "$issuer" ] && [ "$issuer" != "null" ] || fail "role $PKI_MOUNT/roles/$PKI_ROLE has no issuer"

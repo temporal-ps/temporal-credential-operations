@@ -76,4 +76,6 @@ for ns in "${CLIENT_NAMESPACES[@]}"; do
   log "PASS $ns: vault-pki-client logs in to Vault with policies $policies"
 done
 
+"$DEMO_DIR/scripts/apply-settings.sh"
+
 log "Vault and ESO ready. Next: ./scripts/rollover/01-snapshot.sh"

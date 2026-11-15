@@ -6,8 +6,9 @@ kind: ExternalSecret
 metadata:
   name: temporal-cloud-leaf
 spec:
-  # Demo value: a 30-minute leaf refreshed every 10 minutes.
-  refreshInterval: 10m
+  # Default only: scripts/apply-settings.sh sets it from
+  # ESO_REFRESH_INTERVAL in demo-settings.env.
+  refreshInterval: 1m
   target:
     name: temporal-cloud-leaf
     creationPolicy: Owner

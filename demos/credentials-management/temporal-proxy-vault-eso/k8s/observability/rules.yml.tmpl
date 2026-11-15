@@ -1,0 +1,31 @@
+# Alerts from the spec's Observability section, rendered into ConfigMap
+# prometheus-rules by scripts/apply-settings.sh. ${...} values come from
+# demo-settings.env. No Alertmanager is deployed; firing alerts show in the
+# Prometheus UI under Alerts.
+groups:
+  - name: temporal-proxy-certificates
+    rules:
+      - alert: TemporalProxyLeafRenewalStalled
+        # Two refreshes missed: less than leaf TTL - 2 x refresh interval left.
+        expr: (tmprl_proxy_tls_cert_expiry_timestamp_seconds{file="cert"} - time()) < ${RENEWAL_STALLED_SECONDS}
+        for: 1m
+        labels: {severity: page}
+        annotations:
+          summary: "{{ $labels.namespace }}/{{ $labels.pod }} leaf expires in {{ $value | humanizeDuration }}; ESO or Vault is not renewing it"
+      - alert: TemporalProxyReloadFailed
+        expr: increase(tmprl_proxy_tls_reloads_total{result="failure"}[10m]) > 0
+        labels: {severity: page}
+        annotations:
+          summary: "{{ $labels.namespace }}/{{ $labels.pod }} rejected new certificate material and kept its previous leaf"
+      - alert: TemporalProxyMissing
+        # The demo runs two proxy replicas per client namespace.
+        expr: count by (namespace) (tmprl_proxy_tls_cert_expiry_timestamp_seconds{file="cert"}) < 2
+        for: 2m
+        labels: {severity: page}
+        annotations:
+          summary: "fewer proxies than expected report a loaded leaf in {{ $labels.namespace }}"
+      - alert: TemporalProxyForwardingErrors
+        expr: increase(tmprl_proxy_router_forwarding_errors_total[5m]) > 0
+        labels: {severity: ticket}
+        annotations:
+          summary: "{{ $labels.namespace }}/{{ $labels.pod }} failed to forward calls to Temporal Cloud ({{ $labels.reason }})"

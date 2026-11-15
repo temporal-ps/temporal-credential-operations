@@ -1,7 +1,7 @@
 # Progress: Temporal Proxy + Vault PKI + ESO Rotation
 
-**Spec Status:** IMPLEMENTING (milestone 2 verified 2026-11-14; milestone 3 next)
-**Last Updated:** 2026-11-14
+**Spec Status:** IMPLEMENTING (milestone 3 in progress: scripts written, full rollover not yet run)
+**Last Updated:** 2026-11-15
 
 ## Status Summary
 
@@ -84,6 +84,44 @@ CLI runs inside the Vault Pod, so operators need no local Vault install.
   about 72s). This includes kubelet sync, the proxy's 1-minute poll, the
   15-second Prometheus scrape, and the script's 15-second poll. Size the
   gate wait as R + 3 minutes.
+
+## Milestone 3 Log
+
+2026-11-15:
+
+- Probe failures after milestone 2 traced to the host sleeping: ESO could not
+  refresh, the 30-minute leaves expired, Temporal Cloud returned
+  `tls: expired certificate`, and restarted proxies failed to start because
+  Temporal Proxy rejects an expired certificate at startup (up to 15
+  restarts). Recovered at ESO's next refresh. Added a risk row, an
+  implementation note, and a preflight check that refuses to start a rollover
+  while a loaded leaf expires within 5 minutes.
+- Scripts written: `00-preflight`, `04-switch`, `05-verify [--force-refresh]`,
+  `06-retire`, `rollback`, `inject-eso-failure`, `check-issuer-expiry`,
+  `demo-rollover` (steps 0 to 6 in one command), `apply-settings`. The gate is
+  shared in `lib/common.sh`; `01-snapshot` records the old issuer;
+  `bootstrap-manual.sh` re-adds the bootstrap CA when a previous run retired it.
+  `06-retire` evaluates the gate itself, so it refuses and names stale proxies
+  even when `05-verify` was skipped.
+- Grafana annotations posted from inside the Grafana Pod (its admin password
+  never leaves the cluster); dashboard shows them. Four Prometheus alert rules
+  load (renewal stalled, reload failed, proxy missing, forwarding errors).
+- Design change (user direction): demo timing moved to
+  `demo-settings.env` and applied live by `apply-settings.sh`. Defaults changed
+  from a 10-minute refresh with 30-minute leaves to a 1-minute refresh with
+  5-minute leaves, so one routine rollover takes about 6 minutes. The gate's
+  clock-skew allowance dropped from 120 to 5 seconds: at 120 seconds, a leaf
+  issued just before the switch passed the gate. `05-verify` now polls the gate
+  every 15 seconds from switch + R instead of sleeping a fixed 3 minutes.
+- `watch-renewals.sh` counted a renewal only when NotAfter increased, which
+  failed when the leaf lifetime was shortened; it now counts any change.
+  Verified at the new defaults: every proxy loaded 2 consecutive renewals,
+  6 to 55 seconds after each ESO refresh, no restarts, 0 failed probe calls.
+- Verified read-only against the live demo: `00-preflight`,
+  `check-issuer-expiry`, the shared gate, `apply-settings`.
+- Not yet run (changes the demo Namespace): finishing the migration with
+  `05-verify` and `06-retire`, `demo-rollover`, the failure-injection
+  walkthrough, and `rollback`.
 
 ## Open Items
 

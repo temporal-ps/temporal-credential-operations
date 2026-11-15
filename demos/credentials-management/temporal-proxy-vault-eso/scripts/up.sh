@@ -54,4 +54,6 @@ done
 kc -n "$OBSERVABILITY_NAMESPACE" rollout status deploy/prometheus --timeout=180s
 kc -n "$OBSERVABILITY_NAMESPACE" rollout status deploy/grafana --timeout=180s
 
+"$DEMO_DIR/scripts/apply-settings.sh"
+
 log "Up. Next: ./scripts/verify-m1.sh, then ./scripts/observe.sh for Grafana."

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Force an immediate ESO refresh of temporal-cloud-leaf in each client
-# namespace, instead of waiting for the 10-minute refreshInterval. Used for an
+# namespace, instead of waiting for the refresh interval. Used for an
 # emergency rollover, and to shorten demos.
 #
 # ESO refreshes an ExternalSecret when its force-sync annotation changes.

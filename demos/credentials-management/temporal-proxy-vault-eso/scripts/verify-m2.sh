@@ -14,7 +14,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 require_tools kubectl jq openssl
 
 PROBE_WINDOW="${PROBE_WINDOW:-60s}"
-SKEW_SECONDS="${SKEW_SECONDS:-120}"
 
 [ "$(state_get leaf_source)" = "vault" ] || fail "leaf source is not vault; run ./scripts/migrate-switch.sh"
 issuer="$(state_get new_issuer)"
@@ -52,7 +51,7 @@ count="$(jq '.data.result | length' <<<"$series")"
 [ "$count" -eq "$expected" ] || fail "gate: $count of $expected Ready proxy Pods report a loaded leaf"
 log "PASS gate: $count of $expected Ready proxy Pods report a loaded leaf"
 
-min_not_after=$((switch_epoch + LEAF_TTL_SECONDS - SKEW_SECONDS))
+min_not_after=$((switch_epoch + LEAF_TTL_SECONDS - GATE_SKEW_SECONDS))
 stale="$(jq -r --argjson min "$min_not_after" \
   '.data.result[] | select((.value[1]|tonumber) < $min) | "\(.metric.namespace)/\(.metric.pod) NotAfter \(.value[1])"' <<<"$series")"
 [ -z "$stale" ] || fail "gate: proxies still on a pre-switch leaf: $stale"

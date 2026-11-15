@@ -8,7 +8,7 @@
 # Breaking points the namespace's VaultDynamicSecret generator at a Vault
 # Kubernetes auth role that does not exist. ESO's refreshes fail, the Secret
 # keeps its last leaf, and the proxies keep presenting it until it expires
-# (30 minutes in the demo). Restoring re-applies the namespace's ESO
+# (LEAF_TTL in demo-settings.env). Restoring re-applies the namespace's ESO
 # resources and forces a refresh.
 #
 # CHANGES KUBERNETES only (one generator). Demo only.
@@ -35,6 +35,8 @@ annotate_sync() {
 
 if [ "${2:-}" = "--restore" ]; then
   kc apply -k "$DEMO_DIR/k8s/eso-clients/$ns" >/dev/null
+  kc -n "$ns" patch externalsecret temporal-cloud-leaf --type merge \
+    -p "{\"spec\":{\"refreshInterval\":\"$ESO_REFRESH_INTERVAL\"}}" >/dev/null
   serial_before="$(kc -n "$ns" get secret temporal-cloud-leaf -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -serial)"
   annotate_sync
   deadline=$(( $(now_epoch) + 90 ))

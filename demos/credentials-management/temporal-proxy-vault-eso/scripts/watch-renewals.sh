@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Watch routine leaf renewals with no operator action: ESO refreshes every
-# 10 minutes, Vault signs a new leaf, the kubelet updates the mounted Secret,
+# ESO_REFRESH_INTERVAL, Vault signs a new leaf, the kubelet updates the mounted Secret,
 # and each proxy reloads it.
 #
 # Usage: ./scripts/watch-renewals.sh [RENEWALS]   (default 3)
@@ -60,7 +60,8 @@ while :; do
     f="$work/$(tr '/' '_' <<<"$replica")"
     [ -f "$f" ] || fail "new proxy replica $replica appeared during the watch"
     read -r last n < "$f"
-    if [ "$value" -gt "$last" ]; then
+    # Any change counts: a shorter LEAF_TTL makes a new leaf expire earlier.
+    if [ "$value" != "$last" ]; then
       n=$((n + 1))
       ns="${replica%%/*}"
       refreshed="$(kc -n "$ns" get externalsecret temporal-cloud-leaf -o jsonpath='{.status.refreshTime}')"

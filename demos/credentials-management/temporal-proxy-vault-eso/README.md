@@ -2,8 +2,9 @@
 
 Spec: [`specs/temporal-credential-operations/temporal-proxy-vault-eso/spec.html`](../../../specs/temporal-credential-operations/temporal-proxy-vault-eso/spec.html)
 
-Status: milestone 2 (Vault PKI, External Secrets Operator (ESO), migration from
-the manual CA, routine renewals). The full rollover scripts arrive in milestone 3.
+Status: milestone 3 (CA rollover scripts, failure injection, rollback, alerts,
+and timing settings). Milestones 1 and 2 (proxy path, Vault PKI, External
+Secrets Operator (ESO), migration from the manual CA) are verified.
 
 ## What it runs
 
@@ -158,7 +159,8 @@ failures), and probes are succeeding. Verify: ends with
 ./scripts/watch-renewals.sh 3
 ```
 
-Waits for three automatic renewals on every proxy (about 35 minutes) and logs
+Waits for three automatic renewals on every proxy (about 4 minutes with the
+default settings) and logs
 how long each reload took after its ESO refresh. Verify: ends with
 `PASS 3 renewals on every proxy replica with no restarts and no errors.`
 
@@ -168,6 +170,112 @@ how long each reload took after its ESO refresh. Verify: ends with
 
 Optional: makes ESO reissue both leaves now by changing the `force-sync`
 annotation. Verify: a `PASS` line per namespace with the old and new serial.
+
+### Milestone 3: CA rollover
+
+Finish the migration first, if this cluster has not retired the bootstrap CA:
+
+```bash
+./scripts/rollover/05-verify.sh
+./scripts/rollover/06-retire.sh
+```
+
+`05-verify.sh` evaluates the retirement gate until it passes. Verify: ends with
+`Gate passed`. `06-retire.sh` **changes Temporal Cloud:** it re-checks the gate,
+removes the old CA (here the bootstrap CA) from the Namespace, and watches
+probe traffic. Verify: ends with `Rollover complete: <namespace> trusts <fingerprint>`.
+
+Then run a whole rollover in one command while watching Grafana:
+
+```bash
+./scripts/demo-rollover.sh
+```
+
+Runs steps 0 to 6 and prints how long each took. With the default settings it
+takes about 6 minutes: about 2 minutes for Temporal Cloud to accept the new
+CA, about 3 for routine renewal to move every proxy to it, and about 1 to
+retire the old CA. Add `--force-refresh` for an emergency rollover that makes
+ESO reissue every leaf immediately after the switch. **Changes Temporal Cloud**
+(adds one CA, removes one) and Vault. Verify: ends with
+`Rollover complete in <seconds>s` and a timing per step.
+
+The same steps one at a time, each ending with its own `PASS` lines:
+
+| Step | Script | Changes |
+|---|---|---|
+| 0 | `rollover/00-preflight.sh` | Nothing (health check) |
+| 1 | `rollover/01-snapshot.sh` | ConfigMap `vault/rotation-state` |
+| 2 | `rollover/02-create-issuer.sh` | Vault: new issuer |
+| 3 | `rollover/03-add-trust.sh` | Temporal Cloud: adds the new CA |
+| 4 | `rollover/04-switch.sh` | Vault: role signs with the new issuer |
+| 5 | `rollover/05-verify.sh [--force-refresh]` | Nothing (waits for the gate) |
+| 6 | `rollover/06-retire.sh` | Temporal Cloud: removes the old CA; Vault: old issuer stops signing |
+
+Show the gate catching a broken delivery chain. After step 4, break one
+namespace's ESO delivery:
+
+```bash
+./scripts/inject-eso-failure.sh callers
+./scripts/rollover/06-retire.sh
+```
+
+Verify: `inject-eso-failure.sh` ends with `PASS callers: ExternalSecret
+Ready=False`, and `06-retire.sh` exits non-zero with `FAIL gate: pre-switch
+leaf on callers/...` lines and removes nothing. Repair it within the leaf
+lifetime (5 minutes by default), or the callers proxies' leaves expire and
+their calls fail:
+
+```bash
+./scripts/inject-eso-failure.sh callers --restore
+./scripts/rollover/05-verify.sh
+./scripts/rollover/06-retire.sh
+```
+
+Verify: `PASS callers: ExternalSecret Ready and a new leaf delivered`, then
+`Gate passed`, then `Rollover complete`.
+
+Roll back instead of retiring:
+
+```bash
+./scripts/rollover/rollback.sh
+```
+
+Steps back one stage per run and never removes the old CA: after the switch it
+points the role back at the old issuer (phase `trusted`); run again to remove
+the new CA from the Namespace (phase `rolled-back`). Verify: `PASS role ...
+signs with <old issuer>`, then `PASS accepted CAs equal the Snapshot`.
+
+Standing checks: the Prometheus alerts (renewal stalled, reload failed, proxy
+missing, forwarding errors) appear under Alerts at <http://localhost:9090>
+while `observe.sh` runs, and
+
+```bash
+./scripts/check-issuer-expiry.sh
+```
+
+fails when the current issuer expires within `ISSUER_LEAD_DAYS`. Verify: `PASS
+issuer <name> expires <date>`.
+
+### Timing settings
+
+`demo-settings.env` holds the demo's timing values: ESO refresh interval (1m),
+leaf lifetime (5m), the gate's clock-skew allowance, issuer lifetime and lead
+time, and the probe watch after retirement. Override any of them in
+`.env.local`, then apply them to the running demo:
+
+```bash
+./scripts/apply-settings.sh
+```
+
+Patches the Vault role and each `ExternalSecret`, and re-renders the alert
+rules (restarting only Prometheus). Leaves already issued keep their old
+lifetime. Verify: a `PASS` line for the role, each `ExternalSecret`, and the
+alert rules.
+
+The leaf lifetime is also how long the demo survives ESO or Vault being
+unavailable, including your machine sleeping. After a longer sleep, run
+`./scripts/force-refresh.sh` before continuing; `00-preflight.sh` refuses to
+start a rollover while any proxy's leaf is about to expire.
 
 ### Observe and tear down
 

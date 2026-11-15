@@ -22,8 +22,6 @@ ESO_CHART_VERSION="2.15.0"              # External Secrets Operator v2.15.0
 # Vault PKI layout. See the spec's Components section.
 PKI_MOUNT="pki-temporal"
 PKI_ROLE="temporal-client"
-LEAF_TTL_SECONDS=1800                   # role ttl=30m
-ESO_REFRESH_SECONDS=600                 # ExternalSecret refreshInterval: 10m
 
 # Local, gitignored state: exported issuer certificates (public only).
 STATE_DIR="$DEMO_DIR/.state"
@@ -47,9 +45,9 @@ require_tools() {
   done
 }
 
-# Load KEY=VALUE lines from the repository's .env.local without printing values.
-load_env_local() {
-  local env_file="${ENV_FILE:-$REPO_ROOT/.env.local}"
+# Load KEY=VALUE lines from a file without printing values.
+load_kv_file() {
+  local env_file="$1"
   [ -f "$env_file" ] || fail "missing $env_file"
   local line key value
   while IFS= read -r line || [ -n "$line" ]; do
@@ -64,9 +62,28 @@ load_env_local() {
   done < "$env_file"
 }
 
-# Load the repository's .env.local when present, so every script sees the
-# demo settings (see the repository-root .env.example).
+# The repository's .env.local (see the repository-root .env.example).
+load_env_local() { load_kv_file "${ENV_FILE:-$REPO_ROOT/.env.local}"; }
+
+# Demo timing settings, then .env.local, which may override them.
+SETTINGS_FILE="$DEMO_DIR/demo-settings.env"
+load_kv_file "$SETTINGS_FILE"
 if [ -f "${ENV_FILE:-$REPO_ROOT/.env.local}" ]; then load_env_local; fi
+
+# Duration with an s, m, or h suffix (or plain seconds) to seconds.
+duration_seconds() {
+  case "$1" in
+    *h) echo $(( ${1%h} * 3600 )) ;;
+    *m) echo $(( ${1%m} * 60 )) ;;
+    *s) echo "${1%s}" ;;
+    *[!0-9]*|"") fail "not a duration: '$1' (use s, m, or h)" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+ESO_REFRESH_SECONDS="$(duration_seconds "$ESO_REFRESH_INTERVAL")"
+LEAF_TTL_SECONDS="$(duration_seconds "$LEAF_TTL")"
+GATE_SKEW_SECONDS="$GATE_CLOCK_SKEW_SECONDS"
 
 # Resolve a path from .env.local: absolute as given, otherwise relative to the
 # repository root.
@@ -155,6 +172,12 @@ prom_query() {
     wget -qO- "http://localhost:9090/api/v1/query?query=$(jq -rn --arg q "$1" '$q|@uri')"
 }
 
+# Any Prometheus API path, e.g. "rules".
+prom_query_api() {
+  kc -n "$OBSERVABILITY_NAMESPACE" exec deploy/prometheus -c prometheus -- \
+    wget -qO- "http://localhost:9090/api/v1/$1"
+}
+
 # Ready proxy Pods across client namespaces, one "<namespace>/<pod>" per line.
 ready_proxy_pods() {
   local ns
@@ -163,6 +186,24 @@ ready_proxy_pods() {
       | jq -r '.items[] | select(.metadata.deletionTimestamp == null)
           | select(any(.status.conditions[]?; .type == "Ready" and .status == "True"))
           | "\(.metadata.namespace)/\(.metadata.name)"'
+  done
+}
+
+# --- ESO -----------------------------------------------------------------------
+# Set each client namespace's ExternalSecret refreshInterval from
+# ESO_REFRESH_INTERVAL. Call after any kubectl apply of k8s/eso-clients, which
+# carries the manifest default. Skips namespaces without one.
+apply_eso_refresh_interval() {
+  local ns got
+  for ns in "${CLIENT_NAMESPACES[@]}"; do
+    kc -n "$ns" get externalsecret temporal-cloud-leaf >/dev/null 2>&1 || {
+      log "INFO $ns: no ExternalSecret yet"; continue; }
+    kc -n "$ns" patch externalsecret temporal-cloud-leaf --type merge \
+      -p "{\"spec\":{\"refreshInterval\":\"$ESO_REFRESH_INTERVAL\"}}" >/dev/null
+    got="$(kc -n "$ns" get externalsecret temporal-cloud-leaf -o jsonpath='{.spec.refreshInterval}')"
+    [ "$(duration_seconds "$got")" = "$ESO_REFRESH_SECONDS" ] \
+      || fail "$ns: ExternalSecret refreshInterval reads back '$got', expected $ESO_REFRESH_INTERVAL"
+    log "PASS $ns: ExternalSecret refreshInterval $got"
   done
 }
 
@@ -188,8 +229,6 @@ issuer_cert() {
 #      NotAfter >= switch + leaf TTL - skew.
 #   3. No TLS reload failures in the last 15 minutes.
 #   4. Each namespace's Secret holds a leaf signed by the new issuer.
-GATE_SKEW_SECONDS="${GATE_SKEW_SECONDS:-120}"
-
 gate_evaluate() {
   local switch_epoch issuer pem ns ready want expected=0 rc=0
   switch_epoch="$(state_get switch_epoch)"

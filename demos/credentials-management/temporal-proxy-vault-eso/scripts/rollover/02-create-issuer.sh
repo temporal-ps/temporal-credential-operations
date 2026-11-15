@@ -33,7 +33,7 @@ else
     common_name="Acme Temporal client CA $issuer" \
     organization="Acme" \
     issuer_name="$issuer" key_name="key-$issuer" \
-    key_type=ec key_bits=256 ttl=8760h >/dev/null
+    key_type=ec key_bits=256 ttl="$ISSUER_TTL" >/dev/null
   log "Created issuer $issuer"
 fi
 
@@ -47,10 +47,11 @@ role_issuer=""
 if vault_exec read -format=json "$PKI_MOUNT/roles/$PKI_ROLE" >/dev/null 2>&1; then
   role_issuer="$(vault_exec read -format=json "$PKI_MOUNT/roles/$PKI_ROLE" | jq -r '.data.issuer_ref')"
 else
-  # First run: create the role pointing at the first issuer. Demo lifetimes.
+  # First run: create the role pointing at the first issuer. Leaf lifetime
+  # from demo-settings.env (LEAF_TTL).
   vault_exec write "$PKI_MOUNT/roles/$PKI_ROLE" \
     issuer_ref="$issuer" \
-    ttl=30m max_ttl=30m \
+    ttl="$LEAF_TTL_SECONDS" max_ttl="$LEAF_TTL_SECONDS" \
     key_type=ec key_bits=256 \
     client_flag=true server_flag=false \
     allowed_domains="workers.temporal-proxy,callers.temporal-proxy" \

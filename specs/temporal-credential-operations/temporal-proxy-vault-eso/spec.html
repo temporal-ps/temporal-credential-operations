@@ -282,8 +282,8 @@ today by email or judgment into alerts routed to on-call.</p>
       <td>TLS hot reload and its metrics are not in a tagged release yet (latest v1.0.1).</td>
       <td>Use v1.0.1 and restart on every renewal. Defeats the point of the demo.</td></tr>
     <tr><td>Short lifetimes in the demo</td>
-      <td>Leaf TTL 30 minutes and ESO refresh every 10 minutes make renewals and a full rollover visible in under an hour.</td>
-      <td>Production-like values (days). Nothing visible during a demo.</td></tr>
+      <td>Leaf TTL 5 minutes and ESO refresh every minute let a routine rollover, with no forced refresh, finish in about 6 minutes. The values live in <code>demo-settings.env</code> and <code>apply-settings.sh</code> applies changes to a running demo without restarting it.</td>
+      <td>Production-like values (days). Nothing visible during a demo. A 10-minute refresh with 30-minute leaves: a routine rollover takes over 15 minutes.</td></tr>
   </tbody>
 </table></div>
 
@@ -434,8 +434,8 @@ certificates.</p>
   inside the Vault Pod, so the operator needs no local Vault install.</li>
   <li>PKI mount <code>pki-temporal</code>, issuers named
   <code>ca-&lt;UTC timestamp&gt;</code> and generated with an internal EC P-256 key.</li>
-  <li>Role <code>temporal-client</code>: <code>ttl=30m</code>,
-  <code>max_ttl=30m</code>, <code>client_flag=true</code>,
+  <li>Role <code>temporal-client</code>: <code>ttl</code> and <code>max_ttl</code>
+  from <code>LEAF_TTL</code> (default 5 minutes), <code>client_flag=true</code>,
   <code>server_flag=false</code>, <code>no_store=true</code>, EC P-256 keys, common
   names restricted to <code>workers.temporal-proxy</code> and
   <code>callers.temporal-proxy</code>, <code>issuer_ref</code> set by the switch
@@ -451,7 +451,8 @@ certificates.</p>
 <h4>ESO (per client namespace)</h4>
 <p>A <code>VaultDynamicSecret</code> generator posting to
 <code>/pki-temporal/issue/temporal-client</code>, and an <code>ExternalSecret</code>
-with <code>refreshInterval: 10m</code> templating <code>certificate</code> and
+with <code>refreshInterval</code> from <code>ESO_REFRESH_INTERVAL</code> (default 1
+minute) templating <code>certificate</code> and
 <code>private_key</code> into a <code>kubernetes.io/tls</code> Secret named
 <code>temporal-cloud-leaf</code>. ESO is installed from its
 Helm chart at a pinned version (2.15.0).</p>
@@ -500,8 +501,19 @@ No AWS service is emulated and ESO's fake provider is not used; see
 <h3 id="chain">Leaf delivery chain</h3>
 <p>ESO refresh (R), Vault signs, ESO writes the Secret, kubelet syncs the volume (K),
 proxy polls (P = 1 minute), validates, swaps, and the expiry gauge moves. With the
-demo values every healthy proxy is on a fresh leaf within about 13 minutes of any
-refresh, and on a new-issuer leaf within <em>R + K + P</em> of a switch.</p>
+demo defaults each proxy loads a new leaf within about a minute of each refresh, and
+every proxy is on a new-issuer leaf within <em>R + K + P</em>, about 3 minutes, of a
+switch.</p>
+
+<h4>Timing settings</h4>
+<p><code>demo-settings.env</code> holds every demo timing value: the ESO refresh
+interval, the leaf lifetime, the gate's clock-skew allowance, the issuer lifetime and
+lead time, and the probe watch after retirement. <code>apply-settings.sh</code>
+patches the Vault role and each <code>ExternalSecret</code> and re-renders the alert
+rules, so a change applies to a running demo with only a Prometheus restart; leaves
+already issued keep their old lifetime. It refuses a refresh interval longer than a
+third of the leaf lifetime. The leaf lifetime is also how long the demo survives
+ESO or Vault being unavailable, including the host sleeping.</p>
 
 <h3 id="runbook-sequence">Rollover sequence</h3>
 <p>Every script reads <code>.env.local</code>, appends to the
@@ -528,7 +540,7 @@ fails exits non-zero and changes nothing.</p>
       <td>Refuse unless step 3 verified. Set the role's <code>issuer_ref</code> to the new issuer; record the switch time.</td>
       <td>Role reads back the new issuer; switch time recorded.</td></tr>
     <tr><td>5</td><td><code>05-verify.sh</code></td>
-      <td>Wait until <em>switch + R + K + P</em>, then evaluate the <a href="#gate">gate</a> every 30 seconds until it passes or a timeout (default 2R).</td>
+      <td>Wait until <em>switch + R</em> (no wait after a forced refresh), then evaluate the <a href="#gate">gate</a> every 15 seconds until it passes or a timeout (default 2R + 5 minutes).</td>
       <td>Gate passes. On timeout, print each stale proxy and its leaf expiry, and exit non-zero.</td></tr>
     <tr><td>6</td><td><code>06-retire.sh</code></td>
       <td>Re-run the gate. Remove the old fingerprint with <code>accepted-client-ca remove</code>. Set the old issuer's <code>usage</code> to <code>read-only,crl-signing</code>.</td>
@@ -612,6 +624,10 @@ tmprl_proxy_tls_cert_expiry_timestamp_seconds{file="cert"}
 
 # 3. No recent reload failures (must be empty)
 increase(tmprl_proxy_tls_reloads_total{result="failure"}[15m]) &gt; 0</code></pre>
+<p>The skew is a clock-skew allowance between Vault and the clock that records the
+switch. A leaf issued within <em>skew</em> before the switch would count as new, so
+the skew must stay far below <em>R</em>: the demo uses 5 seconds on one host clock;
+production uses its measured clock-skew bound.</p>
 <p>Pods restarted during the rollover change the expected set. The script compares
 against the current ready replica count of each proxy Deployment, not Pod names.
 Prometheus keeps returning a terminated Pod's series for several minutes, so the gate
@@ -637,14 +653,16 @@ and the NotAfter must match the gauge.</p>
 </table></div>
 
 <h4>Alerts</h4>
+<p>Prometheus alert rules, rendered from <code>rules.yml.tmpl</code> with the
+thresholds derived from the timing settings:</p>
 <pre><code># Leaf renewal stalled: two refreshes missed
 (tmprl_proxy_tls_cert_expiry_timestamp_seconds{file="cert"} - time()) &lt; ($leaf_ttl - 2 * $refresh_interval)
 
 # Proxy rejected new material
 increase(tmprl_proxy_tls_reloads_total{result="failure"}[10m]) &gt; 0
 
-# A proxy stopped reporting
-count(tmprl_proxy_tls_cert_expiry_timestamp_seconds{file="cert"}) &lt; $expected_proxies
+# A proxy stopped reporting (per namespace, against its replica count)
+count by (namespace) (tmprl_proxy_tls_cert_expiry_timestamp_seconds{file="cert"}) &lt; $replicas
 
 # Calls to Temporal Cloud failing at the proxy
 increase(tmprl_proxy_router_forwarding_errors_total[5m]) &gt; 0</code></pre>
@@ -716,7 +734,9 @@ schedule or replace it with a Vault-side metric.</p>
   auth, ESO, and the migration run. <em>Done when</em> three consecutive renewals
   reload with no probe errors.</li>
   <li><strong>Rollover scripts.</strong> Steps 0 to 6, rollback, the
-  <code>ExternalSecret</code> failure injection, and dashboard annotations.
+  <code>ExternalSecret</code> failure injection, dashboard annotations, alert rules,
+  the timing settings, and <code>demo-rollover.sh</code>, which runs steps 0 to 6 in
+  one command.
   <em>Done when</em> the failure case exits non-zero and the repaired run
   completes.</li>
   <li><strong>Sample Workflow.</strong> Worker and Starter replace the probes.
@@ -755,7 +775,8 @@ schedule or replace it with a Vault-side metric.</p>
     <tr><td>The demo Namespace does not accept mTLS, or the proxy silently uses an API key</td><td><span class="badge high">High</span></td><td><span class="badge medium">Medium</span></td><td>Preflight confirms the accepted CA list is non-empty; proxy config has no <code>credentials</code> block.</td></tr>
     <tr><td>A script removes a CA another client of the demo Namespace depends on</td><td><span class="badge high">High</span></td><td><span class="badge low">Low</span></td><td>The demo requires a dedicated Namespace (stated in <code>.env.example</code> and the demo README). Only the Snapshot's old CA is removable, and only after the gate passes.</td></tr>
     <tr><td>Proxy main branch changes TLS behavior before a release</td><td><span class="badge medium">Medium</span></td><td><span class="badge medium">Medium</span></td><td>Pin the commit used to build the image; re-validate on each bump.</td></tr>
-    <tr><td>Kubelet sync is slower than assumed</td><td><span class="badge low">Low</span></td><td><span class="badge medium">Medium</span></td><td>ESO refresh to proxy reload takes about 1 to 2 minutes (K + P plus scrape and poll intervals). <code>05-verify.sh</code> waits <em>R</em> + 3 minutes before evaluating the gate.</td></tr>
+    <tr><td>Kubelet sync is slower than assumed</td><td><span class="badge low">Low</span></td><td><span class="badge medium">Medium</span></td><td>ESO refresh to proxy reload takes under a minute to about 2 minutes (K + P plus scrape and poll intervals). <code>05-verify.sh</code> polls the gate every 15 seconds from <em>switch + R</em> instead of waiting a fixed time.</td></tr>
+    <tr><td>ESO or Vault unavailable longer than the leaf lifetime, including the demo host sleeping</td><td><span class="badge high">High</span></td><td><span class="badge medium">Medium</span> (demo)</td><td>Proxies present expired leaves and Temporal Cloud rejects them; a proxy that restarts then fails to start until ESO delivers a valid leaf. The renewal-stalled alert fires after two missed refreshes. Production leaf lifetimes are days. In the demo, preflight refuses to start a rollover when a loaded leaf expires within 5 minutes, and <code>force-refresh.sh</code> recovers right after the host wakes.</td></tr>
     <tr><td>Dev-mode Vault loses state on restart mid-rollover</td><td><span class="badge medium">Medium</span></td><td><span class="badge low">Low</span></td><td>Demo only. Rollback restores trust from the ConfigMap; the runbook states production Vault is persistent.</td></tr>
     <tr><td>The scripts are mistaken for production-ready automation</td><td><span class="badge medium">Medium</span></td><td><span class="badge medium">Medium</span></td><td>Runbook marks demo-only values (dev Vault, short TTLs, Kubernetes auth) and lists what changes for production.</td></tr>
   </tbody>
@@ -789,6 +810,9 @@ schedule or replace it with a Vault-side metric.</p>
 </ul>
 <h3>Implementation Notes</h3>
 <ul>
+  <li>Temporal Proxy refuses to start when its configured client certificate has
+  expired, so an expired leaf in the Secret turns a proxy restart into a crash loop
+  until ESO writes a valid one.</li>
   <li>The bootstrap certificate is a CA certificate
   (<code>CA:TRUE</code>), not a leaf. Once trusted by the Namespace it can be
   presented directly, but <code>rotate-manual-leaf.sh</code> signs a proper
