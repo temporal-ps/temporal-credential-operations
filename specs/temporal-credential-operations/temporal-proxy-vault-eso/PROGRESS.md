@@ -34,7 +34,7 @@ namespace, Prometheus, Grafana dashboard, verify and hot-reload scripts).
   list and `authMethod: Restricted`, so Temporal Cloud reset the TLS
   handshake (reproduced from the host without the proxy). The Namespace was
   then configured for mTLS with the bootstrap CA accepted.
-- **Milestone 1 verified** (`verify-m1.sh`): 4 of 4 proxy replicas ready
+- **Milestone 1 verified** (`verify-proxies.sh`): 4 of 4 proxy replicas ready
   and reporting a loaded leaf whose NotAfter matches the mounted
   certificate; 28 probe calls per namespace per minute through Service DNS,
   0 failed; 0 TLS reload failures.
@@ -72,7 +72,7 @@ CLI runs inside the Vault Pod, so operators need no local Vault install.
   within about a minute. Re-run skipped the add and re-verified.
 - `migrate-switch.sh`: switched at 2026-11-14T04:43:50Z. One rolling restart
   per namespace; 0 probe failures since the switch.
-- `verify-m2.sh` first failed: Prometheus returned 8 leaf series for 4 Ready
+- `verify-migration.sh` first failed: Prometheus returned 8 leaf series for 4 Ready
   Pods (the terminated Pods' series linger). The gate now evaluates only
   series from Pods Kubernetes reports as Ready; spec updated. Re-run passed:
   4 of 4 proxies on Vault leaves, no reload failures, probes clean.
@@ -145,6 +145,10 @@ CLI runs inside the Vault Pod, so operators need no local Vault install.
 - [ ] Gather requirements before choosing an execution option: CA topology
       across Namespaces, Acme security team requirements, Namespace count,
       owning team.
+- [ ] Answer the proposal's production-adoption questions (`spec.html`,
+      Open Questions): client inventory, accepted-CA ownership versus
+      Terraform Enterprise, Vault PKI placement, cross-cluster metrics,
+      proxy placement.
 
 ## Feedback Items
 
@@ -171,6 +175,18 @@ CLI runs inside the Vault Pod, so operators need no local Vault install.
   `TEMPORAL_DEMO_CA_CERT_FILE`, `TEMPORAL_DEMO_CA_KEY_FILE`; the Ops API key
   needs an account-level role (Global Admin). Repository-root `.env.example`
   and the demo README describe the setup.
+
+- 2026-11-15 (user): The spec had become a specification of the demo, but
+  the concern is a proposed implementation that Acme's operations team must
+  be able to evaluate. Design change: the previous `spec.html` is now
+  `demo-spec.html` (demo topology, components, scripts, demo-only values,
+  validation). A new `spec.html` is the proposal: current state, production
+  architecture, lifecycles, rollover step contracts, retirement gate,
+  migration, security model, design alternatives, production parameters,
+  execution options, evolution, risks, and open questions. New open
+  questions surfaced in the proposal: client inventory, ownership of
+  accepted client CAs versus Terraform Enterprise, Vault PKI placement,
+  cross-cluster metrics for the gate, and proxy placement.
 
 ## Roadmap
 

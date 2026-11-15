@@ -153,6 +153,12 @@ documentation site's palette. Keep styling in that stylesheet, not inline.
 Use Mermaid (pinned version from a CDN, as in the template) for diagrams.
 `PROGRESS.md`, runbooks, and demo READMEs stay Markdown.
 
+`spec.html` is the customer-facing proposal: it must let the customer's
+operations team evaluate the approach, so it covers the problem, the
+proposed design, alternatives, risks, open questions, and evolution, not
+demo mechanics. Demo design that outgrows the spec's Deliverables section
+goes in `demo-spec.html` beside it.
+
 Some older specs are still `spec.md`. Convert a spec to HTML the next time
 it receives a substantive change, and delete the Markdown file in the same
 change.
@@ -166,6 +172,7 @@ specs/README.md
 specs/TEMPLATE.html
 specs/assets/spec.css
 specs/temporal-credential-operations/<concern>/spec.html
+specs/temporal-credential-operations/<concern>/demo-spec.html   # optional
 specs/temporal-credential-operations/<concern>/PROGRESS.md
 runbooks/<concern>/...
 demos/<concern>/...

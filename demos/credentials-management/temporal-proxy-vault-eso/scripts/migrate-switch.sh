@@ -11,7 +11,7 @@
 #
 # Idempotent.
 #
-# Verify: ./scripts/verify-m2.sh
+# Verify: ./scripts/verify-migration.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 require_tools kubectl jq openssl
 
@@ -54,4 +54,4 @@ state_set switch_time "$switch_time"
 state_set switch_epoch "$(date -j -u -f %FT%TZ "$switch_time" +%s 2>/dev/null || date -u -d "$switch_time" +%s)"
 state_set leaf_source vault
 state_set phase switched
-log "Switched at $switch_time. Next: ./scripts/verify-m2.sh"
+log "Switched at $switch_time. Next: ./scripts/verify-migration.sh"

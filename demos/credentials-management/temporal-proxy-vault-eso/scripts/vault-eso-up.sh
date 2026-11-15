@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Milestone 2: install Vault (dev mode) and External Secrets Operator (ESO) from
+# Install Vault (dev mode) and External Secrets Operator (ESO) from
 # pinned Helm charts, then configure Vault for the demo:
 #
 #   - PKI secrets engine at pki-temporal (no issuer yet; 02-create-issuer.sh

@@ -19,33 +19,27 @@
 <nav class="toc" aria-label="Contents">
   <div class="label">Contents</div>
   <ol>
-    <li><a href="#options">Rollover execution options</a></li>
-    <li><a href="#overview">Overview</a></li>
-    <li><a href="#goals">Goals &amp; Success Criteria</a></li>
+    <li><a href="#summary">Summary</a></li>
     <li><a href="#current">Current State</a></li>
-    <li><a href="#desired">Desired State</a>
+    <li><a href="#proposal">Proposal</a>
       <ol>
+        <li><a href="#architecture">Architecture</a></li>
+        <li><a href="#lifecycles">Two lifecycles</a></li>
         <li><a href="#why-proxy">What the proxy makes observable</a></li>
-      </ol>
-    </li>
-    <li><a href="#technical">Technical Approach</a>
-      <ol>
-        <li><a href="#decisions">Design decisions</a></li>
-        <li><a href="#topology">Demo topology</a></li>
-        <li><a href="#components">Components</a></li>
-        <li><a href="#chain">Leaf delivery chain</a></li>
-        <li><a href="#runbook-sequence">Rollover sequence</a></li>
-        <li><a href="#migration">First run: migration</a></li>
+        <li><a href="#sequence">Rollover sequence</a></li>
         <li><a href="#gate">Retirement gate</a></li>
-        <li><a href="#observability">Observability</a></li>
-        <li><a href="#invariants">Invariants</a></li>
+        <li><a href="#migration">Migration from today</a></li>
+        <li><a href="#observability">Alerts</a></li>
+        <li><a href="#security">Security model</a></li>
       </ol>
     </li>
+    <li><a href="#decisions">Design Decisions &amp; Alternatives</a></li>
+    <li><a href="#parameters">Production Parameters</a></li>
+    <li><a href="#options">Rollover Execution Options</a></li>
+    <li><a href="#evolution">Evolution</a></li>
+    <li><a href="#risks">Risks &amp; Failure Modes</a></li>
+    <li><a href="#evidence">Evidence from the Demo</a></li>
     <li><a href="#deliverables">Deliverables</a></li>
-    <li><a href="#implementation">Implementation Strategy</a></li>
-    <li><a href="#validation">Validation Strategy</a></li>
-    <li><a href="#risks">Risks &amp; Mitigation</a></li>
-    <li><a href="#dependencies">Dependencies</a></li>
     <li><a href="#questions">Open Questions</a></li>
     <li><a href="#references">References</a></li>
   </ol>
@@ -54,124 +48,58 @@
 <main>
 
 <h1>Proxy, Vault, and ESO Rotation</h1>
-<p class="lede">A scripted runbook for rotating the client certificate authority (CA)
-Temporal Cloud trusts, when Vault PKI signs the leaves, External Secrets Operator
-(ESO) delivers them, and Temporal Proxy presents them. The demo runs the rollover as
-runbook scripts; a command-line tool and a durable RotateCredential Workflow across
-many Temporal Cloud Namespaces are outlined as alternatives. Proven on a local k3d cluster against a real Temporal Cloud
-Namespace.</p>
+<p class="lede">A proposed way to operate Temporal Cloud client credentials at Acme:
+Vault PKI signs short-lived client certificates, External Secrets Operator (ESO)
+delivers them, and Temporal Proxy is the only process that presents them to Temporal
+Cloud. Leaf renewal becomes routine and unattended; a client certificate authority
+(CA) rollover becomes a short, verified procedure whose riskiest step is gated on
+metrics. Written for the operations, infrastructure, and Kubernetes teams to evaluate.</p>
 
 <dl class="meta">
   <div><dt>Status</dt><dd><span class="badge draft">DRAFT</span></dd></div>
   <div><dt>Owner</dt><dd>TODO(author): assign</dd></div>
   <div><dt>Created</dt><dd>2026-11-13</dd></div>
-  <div><dt>Updated</dt><dd>2026-11-14</dd></div>
+  <div><dt>Updated</dt><dd>2026-11-15</dd></div>
+  <div><dt>Demo</dt><dd><a href="demo-spec.html">demo-spec.html</a></dd></div>
   <div><dt>Progress</dt><dd><a href="PROGRESS.md">PROGRESS.md</a></dd></div>
 </dl>
 
 <!-- ============================================================ -->
-<h2 id="options">Rollover execution options</h2>
+<h2 id="summary">Summary</h2>
 
-<p>Once Vault PKI and ESO renew leaves and Temporal Proxy reloads them, nothing
-happens day to day that needs orchestration. A CA rollover is a fixed sequence:
-create an issuer, add trust, switch the issuer, wait, verify, retire. The one step
-that can cause an outage, retiring the old CA too early, is protected by a gate that
-queries the proxies' metrics and refuses to proceed.</p>
-
-<p>That sequence can be executed in several ways. Each option below runs the same
-step contracts from the <a href="#runbook-sequence">rollover sequence</a>: the same
-preconditions, verifications, retirement gate, and rollover state. They differ in
-who runs the steps, how durably, and across how many Temporal Cloud Namespaces.</p>
-
-<div class="table-wrap"><table>
-  <thead><tr><th>Option</th><th>Shape</th><th>Durability</th><th>Suits</th><th>Costs</th></tr></thead>
-  <tbody>
-    <tr><td>Runbook scripts</td>
-      <td>An operator runs one script per step, per Namespace, reading each result before the next.</td>
-      <td>Rollover state in a ConfigMap; every step is idempotent and resumable by re-running it. Waits are attended.</td>
-      <td>Few Namespaces and infrequent rollovers.</td>
-      <td>Operator time per Namespace. The Ops API key is held in the operator's shell for the rollover.</td></tr>
-    <tr><td>Command-line tool</td>
-      <td>One command runs the steps in order for a list of Namespaces, stopping at the gate or on any failed verification.</td>
-      <td>Same state record per Namespace; resumes by re-running. A stopped or closed terminal ends the run, and long waits occupy the operator's session.</td>
-      <td>Tens of Namespaces rolled over in an attended session.</td>
-      <td>A tool to build, version, and distribute. No Worker or new owning team.</td></tr>
-    <tr><td>RotateCredential Workflow</td>
-      <td>Each step is an Activity; the gate is a durable wait. One Workflow per rollover fans out across N Namespaces. It supervises only credential material: the Vault issuer, each Namespace's accepted CAs, and the leaf each proxy reports it loaded. It has no Activities in Worker or Caller clusters.</td>
-      <td>Durable across hours or days of waiting, process restarts, and operator handoffs. Retries, history, and approvals (Signals or Updates) come from Temporal.</td>
-      <td>Many Namespaces, frequent or scheduled rollovers, unattended runs.</td>
-      <td>A Worker, an owning team and on-call, and a long-lived, secured holder of the Ops API key.</td></tr>
-  </tbody>
-</table></div>
-
-<p>The options are not exclusive: the scripts' step contracts carry over to a tool or
-to Activities. Because Temporal Proxy is the only holder of Temporal Cloud client
-credentials, no option selects, restarts, or inspects Worker and Caller Deployments:
-each supervises only the credential material and the proxies' report of what they
-loaded. This spec demonstrates the runbook scripts and does not design the other two. Choosing
-among them depends on requirements not yet known; see
-<a href="#questions">Open Questions</a>. The requirement with the largest effect is
-CA topology: one CA shared across Namespaces makes a rollover one issuer switch, N
-trust changes, and one gate across every proxy; one CA per Namespace or per trust
-domain makes it N independent rollovers.</p>
-
-<!-- ============================================================ -->
-<h2 id="overview">Overview</h2>
-
-<h3>Executive Summary</h3>
-<p>This concern produces two things. A <strong>runbook</strong>: ordered, idempotent
-scripts, each with a built-in verification, that take an operator through a CA
-rollover and refuse to continue when a precondition does not hold. A
-<strong>demo</strong>: a single k3d cluster running Vault, ESO, Temporal Proxy,
-Prometheus, Grafana, and a steady stream of Temporal traffic through the proxy to a
-real Temporal Cloud Namespace, so a rollover can be watched end to end.</p>
-
-<h3>Scope</h3>
+<p>Today every certificate renewal is also a CA change, a Temporal Cloud trust change,
+and a coordinated restart of Worker and Caller Deployments, and the decision to remove
+the old CA rests on judgment. This proposal separates the two things that change at
+different rates:</p>
 <ul>
-  <li><strong>In scope:</strong> leaf renewal through ESO, the CA rollover runbook and
-  its scripts, the retirement gate, the migration from a manually generated CA to a
-  Vault issuer, dashboards and alerts, and an outline of the <a href="#options">rollover
-  execution options</a>.</li>
-  <li><strong>Out of scope:</strong> the design of the command-line tool and the
-  RotateCredential Workflow until their requirements are known, multi-cluster and
-  multi-region topologies, Vault high availability, production Vault and Kubernetes
-  authorization models, payload encryption, and Temporal Proxy listener TLS.</li>
+  <li><strong>Leaves</strong> are short-lived and renewed continuously by ESO from a
+  Vault PKI issuer. Temporal Proxy reloads each new leaf without a restart. Temporal
+  Cloud trust does not change.</li>
+  <li><strong>The CA</strong> is long-lived and lives only in Vault. Rolling it over is
+  a fixed sequence of verified steps. The old CA is removed from Temporal Cloud only
+  when every proxy reports, through its own metrics, that it presents a leaf from the
+  new CA.</li>
 </ul>
+<p>Applications stop holding Temporal Cloud credentials at all. They connect to the
+proxy by its Kubernetes Service name; the proxy holds the leaf and makes it observable.</p>
 
-<!-- ============================================================ -->
-<h2 id="goals">Goals &amp; Success Criteria</h2>
-
-<h3>Primary Goals</h3>
+<div class="callout decision"><div class="title">What this asks of each team</div>
 <ul>
-  <li>Show leaf renewal with no human action, no restart, and no Temporal Cloud change.</li>
-  <li>Script a CA rollover whose every step verifies its own result and whose retire
-  step cannot run before every proxy has moved to the new issuer.</li>
-  <li>Make each stage of a rotation visible on a dashboard while traffic flows.</li>
-</ul>
-
-<h3>Acceptance Criteria</h3>
-<ul class="checklist">
-  <li>A client inside the cluster reaches the Temporal Cloud Namespace only through
-  the proxy, addressed by its Kubernetes Service DNS name, with no Temporal Cloud
-  credentials of its own.</li>
-  <li>The proxy loads each ESO-delivered leaf without a restart; the dashboard shows
-  the leaf expiry advance and reload success at every refresh.</li>
-  <li>Traffic shows no failed calls attributable to TLS across at least three
-  consecutive renewals.</li>
-  <li>The rollover scripts run in order to completion; at the end the Namespace trusts
-  only the new Vault issuer.</li>
-  <li>With one proxy's <code>ExternalSecret</code> deliberately broken, the retire
-  script exits non-zero, names the stale proxy, and changes nothing.</li>
-  <li>Every script can be re-run after success or mid-way failure without a duplicate
-  or destructive change.</li>
-  <li>The Temporal Cloud CA trust set is never written with fewer CAs than at
-  Snapshot, except by the retire script.</li>
-  <li>No CA private key generated by the demo leaves Vault; no secret value appears in
-  committed files, script output, or logs.</li>
-</ul>
+  <li><strong>Infrastructure team (Vault):</strong> a PKI mount and role for Temporal
+  client leaves, and a Kubernetes auth role per client cluster limited to issuing
+  them.</li>
+  <li><strong>Kubernetes team:</strong> a Temporal Proxy Deployment and ESO resources in
+  each client namespace, and metrics collection from every proxy.</li>
+  <li><strong>Fulfillment team (Temporal applications):</strong> point Workers and
+  Callers at the proxy's Service address and remove their client certificate
+  configuration.</li>
+  <li><strong>Whoever owns Temporal Cloud Namespace configuration:</strong> let the
+  rollover change accepted client CAs, which today Terraform Enterprise manages
+  (see <a href="#questions">Open Questions</a>).</li>
+</ul></div>
 
 <!-- ============================================================ -->
-<h2 id="current">Current State (As-Is)</h2>
+<h2 id="current">Current State</h2>
 <ol class="phases">
   <li><strong>Generate.</strong> A new CA and client certificate are created together,
   outside Vault PKI, shortly before the current ones expire.</li>
@@ -196,30 +124,89 @@ real Temporal Cloud Namespace, so a rollover can be watched end to end.</p>
   inboxes rather than on-call, and says nothing about which processes still present
   the certificate.</li>
 </ul>
-<p>The demo's starting point mirrors it: a bootstrap CA generated outside
-Vault, supplied by the person running the demo, presented by the proxy from a manually created Kubernetes
-Secret.</p>
+<h3>Capabilities already in place</h3>
+<p>Discovery reported that Acme already runs a shared, centrally managed Vault with the
+PKI secrets engine enabled, Vault Kubernetes authentication, and ESO. The proposal
+uses those rather than introducing new secret infrastructure. The new component is
+Temporal Proxy.</p>
 
 <!-- ============================================================ -->
-<h2 id="desired">Desired State (To-Be)</h2>
+<h2 id="proposal">Proposal</h2>
+
+<h3 id="architecture">Architecture</h3>
+<div class="diagram"><figure>
+<pre class="mermaid">
+flowchart LR
+  subgraph V["Vault (shared, infrastructure team)"]
+    PKI["PKI mount<br/>issuer: current CA<br/>role: temporal-client"]
+  end
+  subgraph WC["Worker cluster"]
+    W["Workers"] -->|"Service DNS :7233"| WP["Temporal Proxy"]
+    WE["ESO ExternalSecret"] -->|"Secret: leaf"| WP
+  end
+  subgraph CC["Caller cluster"]
+    C["Callers"] -->|"Service DNS :7233"| CP["Temporal Proxy"]
+    CE["ESO ExternalSecret"] -->|"Secret: leaf"| CP
+  end
+  WE -->|"pki/issue"| PKI
+  CE -->|"pki/issue"| PKI
+  WP -->|"mTLS"| TC["Temporal Cloud Namespaces<br/>accepted client CAs"]
+  CP -->|"mTLS"| TC
+  M["Metrics<br/>(every proxy)"] -.->|scrape| WP
+  M -.->|scrape| CP
+  R["Rollover runner<br/>(scripts, tool, or Workflow)"] --> PKI
+  R -->|"Ops API"| TC
+  R -->|"gate query"| M
+</pre>
+<figcaption>Proposed production shape. Applications hold no Temporal Cloud credentials;
+each cluster's proxy holds a leaf that ESO renews from Vault.</figcaption>
+</figure></div>
+
+<div class="table-wrap"><table>
+  <thead><tr><th>Component</th><th>Responsibility</th><th>Holds</th></tr></thead>
+  <tbody>
+    <tr><td>Vault PKI</td><td>Signs client leaves from the current issuer; holds every issuer's private key, generated inside Vault.</td><td>CA private keys (never exported)</td></tr>
+    <tr><td>ESO</td><td>Requests a new leaf every refresh interval and writes it to a Kubernetes Secret in the client namespace.</td><td>A Vault token scoped to issuing leaves</td></tr>
+    <tr><td>Temporal Proxy</td><td>Terminates application connections, presents the leaf to Temporal Cloud, reloads it when the Secret changes, and reports which leaf it loaded.</td><td>The current leaf and its key</td></tr>
+    <tr><td>Metrics (Prometheus or equivalent)</td><td>Collects proxy metrics from every cluster; evaluates alerts and the retirement gate.</td><td>Nothing secret</td></tr>
+    <tr><td>Rollover runner</td><td>Executes the CA rollover steps and records rollover state. Its form is one of the <a href="#options">execution options</a>.</td><td>The Temporal Cloud Ops API key, during a rollover</td></tr>
+    <tr><td>Workers and Callers</td><td>Connect to the proxy's Service address with the fully qualified Namespace name.</td><td>No Temporal Cloud credentials</td></tr>
+  </tbody>
+</table></div>
+
+<h3 id="lifecycles">Two lifecycles</h3>
 <div class="cards">
   <div class="card">
-    <h4>Every day</h4>
-    <p>ESO asks Vault PKI for a new leaf every refresh interval, writes it to a Secret,
-    and the proxy reloads it within a minute. Nobody does anything.</p>
+    <h4>Leaf renewal: continuous</h4>
+    <p>ESO asks Vault for a new leaf every refresh interval <em>R</em>. Kubernetes
+    syncs the Secret volume (<em>K</em>), the proxy polls it (<em>P</em>), validates the
+    new pair, and swaps it in. Nobody acts; Temporal Cloud trust does not change; no
+    Pod restarts.</p>
   </div>
   <div class="card">
-    <h4>Once per CA lifetime</h4>
-    <p>An operator runs the rollover scripts in order. Each prints what it changed and
-    proves it. The last one refuses to retire the old CA until the metrics say it is
-    safe.</p>
+    <h4>CA rollover: once per CA lifetime</h4>
+    <p>Create a new issuer, add it to Temporal Cloud trust, switch Vault to sign with
+    it, wait until every proxy presents a new-issuer leaf, then remove the old CA.
+    Emergency rollover is the same sequence with a forced ESO refresh after the
+    switch.</p>
   </div>
   <div class="card">
-    <h4>Always</h4>
-    <p>Alerts fire on a leaf that stops renewing, a proxy that rejects new material,
-    and an issuer approaching its own expiry.</p>
+    <h4>Standing checks: always</h4>
+    <p>Alerts fire on a leaf that stops renewing, a proxy that rejects new material, a
+    proxy that stops reporting, calls failing at the proxy, and an issuer approaching
+    its own expiry.</p>
   </div>
 </div>
+<p>The timing relationships that govern both lifecycles:</p>
+<ul>
+  <li>Every proxy presents a new-issuer leaf within about <em>R + K + P</em> of a
+  switch. That bounds how long the old CA must stay trusted.</li>
+  <li>A leaf of lifetime <em>L</em> refreshed every <em>R</em> survives an ESO or Vault
+  outage of about <em>L − R</em>. After that, proxies present expired leaves and
+  Temporal Cloud rejects them.</li>
+  <li><em>R</em> should be no more than a third of <em>L</em>, so two missed refreshes
+  alert before the leaf expires.</li>
+</ul>
 
 <h3 id="why-proxy">What Temporal Proxy makes observable</h3>
 <p>Temporal Proxy adds a component to the call path. In exchange, it is the only
@@ -247,307 +234,38 @@ today by email or judgment into alerts routed to on-call.</p>
   </tbody>
 </table></div>
 
-<!-- ============================================================ -->
-<h2 id="technical">Technical Approach</h2>
-
-<h3 id="decisions">Design decisions</h3>
+<h3 id="sequence">Rollover sequence</h3>
+<p>Each step has a precondition and a verification. A step whose precondition fails
+changes nothing; a step whose verification fails stops the rollover. Every step is
+idempotent, so a rollover resumes by re-running the step that stopped. These step
+contracts are the same whichever <a href="#options">execution option</a> runs them.</p>
 <div class="table-wrap"><table>
-  <thead><tr><th>Decision</th><th>Rationale</th><th>Alternative considered</th></tr></thead>
+  <thead><tr><th>#</th><th>Step</th><th>Action</th><th>Verification</th></tr></thead>
   <tbody>
-    <tr><td>ESO talks to a real Vault (dev mode) in the cluster</td>
-      <td>The rotation depends on ESO getting a newly signed leaf from <code>pki/issue</code> at every refresh, and on the issuer switch changing what Vault signs. Dev-mode Vault is one Helm install, so the real backend costs about as much as a stub.</td>
-      <td>ESO's fake provider: returns a fixed value, so leaves never change and the gate is meaningless. An AWS emulator behind ESO's AWS provider: nothing in this path calls AWS, and an emulator does not evaluate IAM policies.</td></tr>
-    <tr><td>Demonstrate the rollover as runbook scripts</td>
-      <td>Each step, precondition, and verification is explicit and can be run and observed on its own. The step contracts carry over to the other <a href="#options">execution options</a>.</td>
-      <td>Demonstrate a command-line tool or a RotateCredential Workflow. Their design depends on requirements not yet known.</td></tr>
-    <tr><td>A Temporal Cloud Namespace dedicated to the demo</td>
-      <td>The scripts own its accepted CA list, so the demo runs every step including retiring the bootstrap CA, and a later run starts again by re-adding it. Anyone can run the demo after cloning the repository and filling in <code>.env.local</code>.</td>
-      <td>A shared Namespace where scripts remove only CAs they added. The bootstrap CA could never be retired, so the demo would stop short of the step that matters most.</td></tr>
-    <tr><td>Persist rollover state in a ConfigMap</td>
-      <td>Scripts are resumable across shells and operators. The switch time recorded there drives the gate.</td>
-      <td>Local state file. Lost when another operator picks up the rollover.</td></tr>
-    <tr><td><code>tcld namespace accepted-client-ca</code> for trust changes</td>
-      <td>It wraps the Ops API, authenticates with an API key, and has <code>list</code>, <code>add</code>, <code>remove</code> (by fingerprint), <code>--request-id</code>, and <code>--resource-version</code>, which give idempotency and optimistic concurrency without custom API code.</td>
-      <td>Direct Ops API calls with <code>curl</code>. Same capability, more script code to review.</td></tr>
-    <tr><td>Disable the old issuer rather than delete it</td>
-      <td>Setting the issuer's <code>usage</code> to exclude <code>issuing-certificates</code> stops signing but keeps the certificate readable for audit and rollback.</td>
-      <td>Delete the issuer. Irreversible; nothing gained.</td></tr>
-    <tr><td>One k3d cluster, two client namespaces, a proxy in each</td>
-      <td>Two independent proxies, one serving Workers and one serving Callers, are enough to show a partial failure blocking retirement. One cluster keeps setup to minutes.</td>
-      <td>Two clusters, matching Acme's Worker and Caller separation. Deferred; the gate logic does not change.</td></tr>
-    <tr><td>Start traffic with the Temporal CLI, add a sample Workflow second</td>
-      <td>A CLI loop through the proxy proves the TLS path and metrics with no application code. A Workflow then proves running executions survive rotations.</td>
-      <td>Build the Workflow first. More code before the first rotation can be observed.</td></tr>
-    <tr><td>Build Temporal Proxy from its main branch</td>
-      <td>TLS hot reload and its metrics are not in a tagged release yet (latest v1.0.1).</td>
-      <td>Use v1.0.1 and restart on every renewal. Defeats the point of the demo.</td></tr>
-    <tr><td>Short lifetimes in the demo</td>
-      <td>Leaf TTL 5 minutes and ESO refresh every minute let a routine rollover, with no forced refresh, finish in about 6 minutes. The values live in <code>demo-settings.env</code> and <code>apply-settings.sh</code> applies changes to a running demo without restarting it.</td>
-      <td>Production-like values (days). Nothing visible during a demo. A 10-minute refresh with 30-minute leaves: a routine rollover takes over 15 minutes.</td></tr>
-  </tbody>
-</table></div>
-
-<h3 id="topology">Demo topology</h3>
-<div class="diagram"><figure>
-<svg class="dg" viewBox="0 0 1000 660" role="img" aria-labelledby="topo-title">
-  <title id="topo-title">Demo topology: one k3d cluster with Vault, ESO, two Temporal Proxy namespaces, and Prometheus, connected to a Temporal Cloud Namespace</title>
-  <defs>
-    <marker id="topo-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker>
-    <marker id="topo-arrow-mtls" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head mtls" d="M0,0 L10,5 L0,10 z"/></marker>
-  </defs>
-
-  <!-- cluster -->
-  <rect class="cluster" x="20" y="20" width="740" height="620" rx="14"/>
-  <text class="group-label" x="36" y="42">k3d cluster</text>
-
-  <!-- ns: workers -->
-  <rect class="ns" x="40" y="56" width="700" height="196" rx="10"/>
-  <text class="group-label" x="54" y="76">ns: workers</text>
-  <rect class="node actor" x="540" y="84" width="190" height="44" rx="8"/>
-  <text x="635" y="111" text-anchor="middle">Worker / CLI probe</text>
-  <rect class="node" x="50" y="180" width="190" height="56" rx="8"/>
-  <text x="145" y="203" text-anchor="middle">VaultDynamicSecret</text>
-  <text x="145" y="222" text-anchor="middle">+ ExternalSecret</text>
-  <rect class="node secret" x="290" y="180" width="190" height="56" rx="8"/>
-  <text x="385" y="203" text-anchor="middle">Secret</text>
-  <text class="muted" x="385" y="222" text-anchor="middle">temporal-cloud-leaf</text>
-  <rect class="node proxy" x="540" y="180" width="190" height="56" rx="8"/>
-  <text x="635" y="203" text-anchor="middle">temporal-proxy</text>
-  <text class="muted" x="635" y="222" text-anchor="middle">hot-reloads the leaf</text>
-  <path class="edge" d="M240,208 H288" marker-end="url(#topo-arrow)"/>
-  <path class="edge" d="M480,208 H538" marker-end="url(#topo-arrow)"/>
-  <path class="edge" d="M635,128 V178" marker-end="url(#topo-arrow)"/>
-  <text class="muted" x="625" y="158" text-anchor="end">temporal-proxy.workers.svc:7233</text>
-
-  <!-- shared row -->
-  <rect class="ns" x="40" y="272" width="210" height="116" rx="10"/>
-  <text class="group-label" x="54" y="292">ns: external-secrets</text>
-  <rect class="node" x="50" y="304" width="190" height="64" rx="8"/>
-  <text x="145" y="341" text-anchor="middle">ESO controller</text>
-
-  <rect class="ns" x="260" y="272" width="260" height="116" rx="10"/>
-  <text class="group-label" x="274" y="292">ns: vault</text>
-  <rect class="node" x="272" y="304" width="122" height="64" rx="8"/>
-  <text x="333" y="331" text-anchor="middle">Vault (dev)</text>
-  <text class="muted" x="333" y="350" text-anchor="middle">PKI mount + role</text>
-  <rect class="node" x="402" y="304" width="108" height="64" rx="8"/>
-  <text x="456" y="331" text-anchor="middle">ConfigMap</text>
-  <text class="muted" x="456" y="350" text-anchor="middle">rotation-state</text>
-
-  <rect class="ns" x="530" y="272" width="210" height="116" rx="10"/>
-  <text class="group-label" x="544" y="292">ns: observability</text>
-  <rect class="node" x="540" y="304" width="96" height="64" rx="8"/>
-  <text x="588" y="341" text-anchor="middle">Prometheus</text>
-  <rect class="node" x="652" y="304" width="78" height="64" rx="8"/>
-  <text x="691" y="341" text-anchor="middle">Grafana</text>
-  <path class="edge" d="M636,336 H650" marker-end="url(#topo-arrow)"/>
-
-  <!-- ns: callers -->
-  <rect class="ns" x="40" y="408" width="700" height="216" rx="10"/>
-  <text class="group-label" x="54" y="428">ns: callers</text>
-  <rect class="node" x="50" y="444" width="190" height="56" rx="8"/>
-  <text x="145" y="467" text-anchor="middle">VaultDynamicSecret</text>
-  <text x="145" y="486" text-anchor="middle">+ ExternalSecret</text>
-  <rect class="node secret" x="290" y="444" width="190" height="56" rx="8"/>
-  <text x="385" y="467" text-anchor="middle">Secret</text>
-  <text class="muted" x="385" y="486" text-anchor="middle">temporal-cloud-leaf</text>
-  <rect class="node proxy" x="540" y="444" width="190" height="56" rx="8"/>
-  <text x="635" y="467" text-anchor="middle">temporal-proxy</text>
-  <text class="muted" x="635" y="486" text-anchor="middle">hot-reloads the leaf</text>
-  <rect class="node actor" x="540" y="560" width="190" height="44" rx="8"/>
-  <text x="635" y="587" text-anchor="middle">Starter / CLI probe</text>
-  <path class="edge" d="M240,472 H288" marker-end="url(#topo-arrow)"/>
-  <path class="edge" d="M480,472 H538" marker-end="url(#topo-arrow)"/>
-  <path class="edge" d="M635,560 V502" marker-end="url(#topo-arrow)"/>
-  <text class="muted" x="625" y="535" text-anchor="end">temporal-proxy.callers.svc:7233</text>
-
-  <!-- control: ESO reconciles, Prometheus scrapes -->
-  <path class="edge ctl" d="M145,304 V238" marker-end="url(#topo-arrow)"/>
-  <path class="edge ctl" d="M145,368 V442" marker-end="url(#topo-arrow)"/>
-  <path class="edge ctl" d="M588,304 V238" marker-end="url(#topo-arrow)"/>
-  <path class="edge ctl" d="M588,368 V442" marker-end="url(#topo-arrow)"/>
-  <text class="muted" x="596" y="262">scrape</text>
-
-  <!-- leaf issuance -->
-  <path class="edge" d="M220,236 L345,302" marker-end="url(#topo-arrow)"/>
-  <path class="edge" d="M220,444 L345,370" marker-end="url(#topo-arrow)"/>
-  <text class="muted" x="284" y="262">pki/issue</text>
-
-  <!-- Temporal Cloud -->
-  <rect class="node cloud" x="800" y="270" width="180" height="96" rx="12"/>
-  <text x="890" y="312" text-anchor="middle">Temporal Cloud</text>
-  <text x="890" y="332" text-anchor="middle">Namespace</text>
-  <path class="edge mtls" d="M730,208 C770,208 770,296 798,296" marker-end="url(#topo-arrow-mtls)"/>
-  <path class="edge mtls" d="M730,472 C770,472 770,340 798,340" marker-end="url(#topo-arrow-mtls)"/>
-  <text class="muted" x="774" y="196">mTLS</text>
-  <text class="muted" x="768" y="490">mTLS</text>
-
-  <!-- Operator -->
-  <rect class="node actor" x="800" y="504" width="180" height="64" rx="8"/>
-  <text x="890" y="531" text-anchor="middle">Operator</text>
-  <text class="muted" x="890" y="550" text-anchor="middle">runbook scripts</text>
-  <path class="edge" d="M890,504 V368" marker-end="url(#topo-arrow)"/>
-  <text class="muted" x="898" y="428">tcld</text>
-  <text class="muted" x="898" y="444">Ops API key</text>
-  <path class="edge" d="M800,592 H762" marker-end="url(#topo-arrow)"/>
-  <text class="muted" x="800" y="614">kubectl: vault CLI,</text>
-  <text class="muted" x="800" y="630">rotation-state, PromQL</text>
-
-  <!-- legend -->
-  <path class="edge" d="M800,40 H830"/><text class="muted" x="838" y="44">request or data</text>
-  <path class="edge ctl" d="M800,60 H830"/><text class="muted" x="838" y="64">reconcile or scrape</text>
-  <path class="edge mtls" d="M800,80 H830"/><text class="muted" x="838" y="84">mTLS to Temporal Cloud</text>
-</svg>
-<figcaption>Single-cluster demo. The two client namespaces stand in for Acme's separate Worker and Caller clusters.</figcaption>
-</figure></div>
-
-<h3 id="components">Components</h3>
-
-<h4>Local inputs (never committed)</h4>
-<div class="table-wrap"><table>
-  <thead><tr><th>Input</th><th>Source</th><th>Used by</th></tr></thead>
-  <tbody>
-    <tr><td><code>TEMPORAL_DEMO_NAMESPACE_ADDRESS</code></td><td><code>.env.local</code></td><td>Proxy upstream <code>hostPort</code> (<code>&lt;namespace&gt;.&lt;account&gt;.tmprl.cloud:7233</code>); the Namespace ID is derived from it for <code>tcld</code>.</td></tr>
-    <tr><td><code>TEMPORAL_CLOUD_OPS_API_KEY</code></td><td><code>.env.local</code></td><td>Runbook scripts only, exported to <code>tcld</code> as <code>TEMPORAL_CLOUD_API_KEY</code>. Belongs to a user or service account with an account-level role (Global Admin). Never placed in the cluster.</td></tr>
-    <tr><td><code>TEMPORAL_DEMO_CA_CERT_FILE</code>, <code>TEMPORAL_DEMO_CA_KEY_FILE</code></td><td><code>.env.local</code> (paths to gitignored files)</td><td>Bootstrap CA certificate and key: the proxy's Secret before migration, and the CA the Namespace accepts at the start.</td></tr>
-  </tbody>
-</table></div>
-<p>The repository-root <code>.env.example</code> lists these inputs; a reader copies
-it to <code>.env.local</code> and fills them in. The proxy is never given an API
-key: it authenticates with mTLS only, or the demo proves nothing about
-certificates.</p>
-
-<h4>k3d cluster</h4>
-<ul>
-  <li>One server node; the locally built proxy image imported with
-  <code>k3d image import</code>.</li>
-  <li>Namespaces: <code>vault</code>, <code>external-secrets</code>,
-  <code>workers</code>, <code>callers</code>, <code>observability</code>.</li>
-  <li>Port-forwards or a load balancer port for Vault, Prometheus, and Grafana so
-  scripts run from the operator's shell.</li>
-</ul>
-
-<h4>Vault</h4>
-<ul>
-  <li>Dev mode from the official Helm chart (chart 0.34.1, Vault 2.0.4). In-memory
-  state is acceptable: the demo re-bootstraps from scripts. Scripts run the Vault CLI
-  inside the Vault Pod, so the operator needs no local Vault install.</li>
-  <li>PKI mount <code>pki-temporal</code>, issuers named
-  <code>ca-&lt;UTC timestamp&gt;</code> and generated with an internal EC P-256 key.</li>
-  <li>Role <code>temporal-client</code>: <code>ttl</code> and <code>max_ttl</code>
-  from <code>LEAF_TTL</code> (default 5 minutes), <code>client_flag=true</code>,
-  <code>server_flag=false</code>, <code>no_store=true</code>, EC P-256 keys, common
-  names restricted to <code>workers.temporal-proxy</code> and
-  <code>callers.temporal-proxy</code>, <code>issuer_ref</code> set by the switch
-  script. The first run of <code>02-create-issuer.sh</code> creates the role pointing
-  at the first issuer.</li>
-  <li>Kubernetes auth with one role per client namespace (<code>&lt;ns&gt;-pki</code>),
-  bound to a <code>vault-pki-client</code> service account in that namespace with
-  audience <code>vault</code>, and a policy allowing only <code>update</code> on
-  <code>pki-temporal/issue/temporal-client</code>. ESO requests a short-lived token
-  for that service account; no Pod mounts it.</li>
-</ul>
-
-<h4>ESO (per client namespace)</h4>
-<p>A <code>VaultDynamicSecret</code> generator posting to
-<code>/pki-temporal/issue/temporal-client</code>, and an <code>ExternalSecret</code>
-with <code>refreshInterval</code> from <code>ESO_REFRESH_INTERVAL</code> (default 1
-minute) templating <code>certificate</code> and
-<code>private_key</code> into a <code>kubernetes.io/tls</code> Secret named
-<code>temporal-cloud-leaf</code>. ESO is installed from its
-Helm chart at a pinned version (2.15.0).</p>
-<p>ESO authenticates to the in-cluster Vault with Vault's Kubernetes auth method.
-No AWS service is emulated and ESO's fake provider is not used; see
-<a href="#decisions">Design decisions</a>.</p>
-
-<h4>Temporal Proxy (per client namespace)</h4>
-<ul>
-  <li>Deployment with two replicas, Service <code>temporal-proxy</code> exposing
-  <code>7233</code> (gRPC) and <code>9090</code> (metrics).</li>
-  <li>Secret <code>temporal-cloud-leaf</code> mounted as a whole volume at
-  <code>/etc/temporal-proxy/cloud</code>; never with <code>subPath</code>.</li>
-  <li>One upstream to <code>$TEMPORAL_DEMO_NAMESPACE_ADDRESS</code> with
-  <code>tls.cert</code> and <code>tls.key</code> only, no <code>credentials</code>
-  block. Clients send the fully qualified Namespace name, so no Namespace rewrite
-  rule is needed.</li>
-  <li>The same upstream serves <code>routing.default</code> and
-  <code>routing.system</code> (Namespace-less system calls).</li>
-</ul>
-
-<h4>Traffic</h4>
-<ol class="phases">
-  <li><strong>CLI probe (milestone 1).</strong> A Deployment in each client namespace
-  running the Temporal CLI in a loop, for example
-  <code>temporal workflow count --address temporal-proxy.&lt;ns&gt;.svc.cluster.local:7233</code>
-  every two seconds, logging success or the gRPC status. No Temporal Cloud
-  credentials in the Pod.</li>
-  <li><strong>Sample Workflow (milestone 4).</strong> A Worker in
-  <code>workers</code> and a Starter in <code>callers</code>, each pointed at its
-  namespace's proxy. The Workflow runs one Activity and a short timer; the Starter
-  starts one execution per second. Language: Java, using the Temporal Java SDK, as for
-  all Temporal application code in this engagement. This Workflow only generates traffic; it is not the
-  RotateCredential Workflow.</li>
-</ol>
-
-<h4>Prometheus and Grafana</h4>
-<ul>
-  <li>Prometheus scrapes every proxy Pod through Kubernetes service discovery on
-  label <code>app.kubernetes.io/name=temporal-proxy</code>, keeping the Pod and
-  namespace as labels.</li>
-  <li>Grafana is provisioned with a Prometheus data source and the dashboard in
-  <a href="#observability">Observability</a>, loaded from a ConfigMap.</li>
-</ul>
-
-<h3 id="chain">Leaf delivery chain</h3>
-<p>ESO refresh (R), Vault signs, ESO writes the Secret, kubelet syncs the volume (K),
-proxy polls (P = 1 minute), validates, swaps, and the expiry gauge moves. With the
-demo defaults each proxy loads a new leaf within about a minute of each refresh, and
-every proxy is on a new-issuer leaf within <em>R + K + P</em>, about 3 minutes, of a
-switch.</p>
-
-<h4>Timing settings</h4>
-<p><code>demo-settings.env</code> holds every demo timing value: the ESO refresh
-interval, the leaf lifetime, the gate's clock-skew allowance, the issuer lifetime and
-lead time, and the probe watch after retirement. <code>apply-settings.sh</code>
-patches the Vault role and each <code>ExternalSecret</code> and re-renders the alert
-rules, so a change applies to a running demo with only a Prometheus restart; leaves
-already issued keep their old lifetime. It refuses a refresh interval longer than a
-third of the leaf lifetime. The leaf lifetime is also how long the demo survives
-ESO or Vault being unavailable, including the host sleeping.</p>
-
-<h3 id="runbook-sequence">Rollover sequence</h3>
-<p>Every script reads <code>.env.local</code>, appends to the
-<code>rotation-state</code> ConfigMap in the <code>vault</code> namespace, prints
-what it changed, and ends with its own verification. A script whose precondition
-fails exits non-zero and changes nothing.</p>
-
-<div class="table-wrap"><table>
-  <thead><tr><th>#</th><th>Script</th><th>Action</th><th>Verification (exit non-zero if false)</th></tr></thead>
-  <tbody>
-    <tr><td>0</td><td><code>00-preflight.sh</code></td>
-      <td>Check tools, environment variables, cluster, Vault, and that the Namespace uses mTLS and accepts the current CA (<code>tcld accepted-client-ca list</code>).</td>
-      <td>Every expected proxy reports the expiry gauge; no reload failures in 15 minutes; current role issuer is readable.</td></tr>
-    <tr><td>1</td><td><code>01-snapshot.sh</code></td>
-      <td>Record current issuer, accepted CA fingerprints, expected proxy Pods, and the Namespace resource version.</td>
-      <td>ConfigMap holds all four; the current issuer's fingerprint is among the accepted CAs.</td></tr>
-    <tr><td>2</td><td><code>02-create-issuer.sh</code></td>
-      <td>Generate issuer <code>ca-&lt;timestamp&gt;</code> with an internal key; export its public certificate.</td>
-      <td>Issuer listed in the mount; role still points at the old issuer; no private key in the output.</td></tr>
-    <tr><td>3</td><td><code>03-add-trust.sh</code></td>
-      <td><code>tcld namespace accepted-client-ca add</code> with the new certificate, using the recorded resource version and a request ID derived from the issuer name. Skip if already present.</td>
-      <td>Accepted set equals Snapshot set plus the new fingerprint.</td></tr>
-    <tr><td>4</td><td><code>04-switch.sh</code></td>
-      <td>Refuse unless step 3 verified. Set the role's <code>issuer_ref</code> to the new issuer; record the switch time.</td>
-      <td>Role reads back the new issuer; switch time recorded.</td></tr>
-    <tr><td>5</td><td><code>05-verify.sh</code></td>
-      <td>Wait until <em>switch + R</em> (no wait after a forced refresh), then evaluate the <a href="#gate">gate</a> every 15 seconds until it passes or a timeout (default 2R + 5 minutes).</td>
-      <td>Gate passes. On timeout, print each stale proxy and its leaf expiry, and exit non-zero.</td></tr>
-    <tr><td>6</td><td><code>06-retire.sh</code></td>
-      <td>Re-run the gate. Remove the old fingerprint with <code>accepted-client-ca remove</code>. Set the old issuer's <code>usage</code> to <code>read-only,crl-signing</code>.</td>
-      <td>Accepted set equals Snapshot set minus old plus new; the old issuer refuses to sign.</td></tr>
-    <tr><td>R</td><td><code>rollback.sh</code></td>
-      <td>Before step 4: remove the new CA from trust. After step 4: set <code>issuer_ref</code> back to the old issuer. Never removes the old CA.</td>
-      <td>Role and accepted set match the state the rollback targets.</td></tr>
+    <tr><td>0</td><td>Preflight</td>
+      <td>Check that each Namespace in scope uses mTLS and accepts the current CA, and that every proxy is healthy.</td>
+      <td>Every expected proxy reports a loaded leaf; no recent reload failures; no loaded leaf close to expiry.</td></tr>
+    <tr><td>1</td><td>Snapshot</td>
+      <td>Record the current issuer, each Namespace's accepted CA fingerprints and resource version, and the expected proxy count.</td>
+      <td>The current issuer is among each Namespace's accepted CAs.</td></tr>
+    <tr><td>2</td><td>Create issuer</td>
+      <td>Generate a new issuer in Vault with an internal key; export only its public certificate.</td>
+      <td>Issuer exists; Vault still signs with the old issuer.</td></tr>
+    <tr><td>3</td><td>Add trust</td>
+      <td>Add the new CA to each Namespace's accepted client CAs, using the recorded resource version.</td>
+      <td>Accepted set equals Snapshot plus the new CA; a call with a test leaf from the new issuer succeeds.</td></tr>
+    <tr><td>4</td><td>Switch</td>
+      <td>Refuse unless step 3 verified. Point the Vault role at the new issuer; record the switch time.</td>
+      <td>Vault signs with the new issuer.</td></tr>
+    <tr><td>5</td><td>Verify</td>
+      <td>Evaluate the <a href="#gate">retirement gate</a> until it passes or times out.</td>
+      <td>Gate passes. On timeout, name each stale proxy.</td></tr>
+    <tr><td>6</td><td>Retire</td>
+      <td>Re-evaluate the gate. Remove the old CA from each Namespace; disable signing on the old issuer, keeping it readable.</td>
+      <td>Accepted set equals Snapshot minus old plus new; the old issuer refuses to sign.</td></tr>
+    <tr><td>R</td><td>Rollback</td>
+      <td>Before step 4: remove the new CA from trust. After step 4: point the role back at the old issuer. Never removes the old CA.</td>
+      <td>Role and accepted set match the state rolled back to.</td></tr>
   </tbody>
 </table></div>
 
@@ -555,67 +273,30 @@ fails exits non-zero and changes nothing.</p>
 <pre class="mermaid">
 sequenceDiagram
   autonumber
-  actor Op as Operator
-  participant S as Scripts
+  participant R as Rollover runner
   participant V as Vault PKI
-  participant T as Temporal Cloud (tcld)
+  participant T as Temporal Cloud
   participant E as ESO + Proxies
-  participant P as Prometheus
-  Op->>S: 00-preflight, 01-snapshot
-  S->>P: all proxies healthy?
-  S->>T: accepted-client-ca list
-  Op->>S: 02-create-issuer
-  S->>V: generate issuer (internal key)
-  Op->>S: 03-add-trust
-  S->>T: add new CA, read back
-  Op->>S: 04-switch
-  S->>V: role issuer_ref = new
+  participant M as Metrics
+  R->>M: preflight: all proxies healthy?
+  R->>T: snapshot accepted CAs
+  R->>V: create issuer (internal key)
+  R->>T: add new CA, read back
+  R->>V: switch role to new issuer
   loop each refresh interval
-    E->>V: pki/issue
-    E->>E: Secret update, kubelet sync, proxy reload
+    E->>V: issue leaf
+    E->>E: Secret update, proxy reload
   end
-  Op->>S: 05-verify
-  S->>P: every proxy leaf NotAfter ≥ switch + L − skew?
-  Op->>S: 06-retire
-  S->>P: gate again
-  S->>T: remove old CA, read back
-  S->>V: old issuer usage = read-only
+  R->>M: gate: every proxy on a post-switch leaf?
+  R->>T: remove old CA, read back
+  R->>V: old issuer: stop signing
 </pre>
-<figcaption>The operator runs each step; the scripts make and verify every change.</figcaption>
+<figcaption>Only step 6 can cause an outage, and it runs only after the gate passes.</figcaption>
 </figure></div>
-
-<p>Emergency rollover uses the same scripts with a forced ESO refresh between steps 4
-and 5: changing the <code>force-sync</code> annotation on each
-<code>ExternalSecret</code> makes ESO reissue the leaf within seconds (<code>force-refresh.sh</code>).</p>
-
-<h3 id="migration">First run: migration from the manual CA</h3>
-<p>The first execution moves the proxies from the manually generated CA to Vault.
-It differs from a routine rollover in two steps:</p>
-<ol class="phases">
-  <li><strong>Bootstrap.</strong> <code>bootstrap-manual.sh</code> creates Secret
-  <code>temporal-cloud-leaf-manual</code> in each client namespace from the bootstrap
-  CA certificate and key, and deploys the proxies mounting it. If the Namespace no
-  longer accepts the bootstrap CA (a previous run retired it), the script adds it
-  back and waits until a call succeeds, as in step 3. Traffic flows; this is Acme's
-  current state with a proxy in front.</li>
-  <li><strong>Snapshot, create issuer, add trust.</strong> As steps 1 to 3. The
-  manual CA is recorded as "old". Step 3 also proves the Namespace accepts the new
-  issuer by completing a call with a 5-minute test leaf, so the switch never depends
-  on CA propagation timing.</li>
-  <li><strong>Switch (migration form).</strong> Instead of changing
-  <code>issuer_ref</code>, <code>migrate-switch.sh</code> applies the ESO resources,
-  waits until each <code>temporal-cloud-leaf</code> Secret holds a leaf signed by the
-  new issuer, then repoints each proxy Deployment at it. This is the only Pod restart
-  in the design. A new Pod that cannot connect never becomes Ready, so a rejected leaf
-  stalls the rollout with the old Pods still serving.</li>
-  <li><strong>Verify.</strong> As step 5.</li>
-  <li><strong>Retire.</strong> As step 6: after the gate passes, the bootstrap CA is
-  removed from the Namespace like any other old CA.</li>
-</ol>
 
 <h3 id="gate">Retirement gate</h3>
 <p>The gate passes only when all three hold:</p>
-<pre><code># 1. Every expected proxy Pod is reporting (count must equal the Snapshot count)
+<pre><code># 1. Every expected proxy Pod is reporting (count must equal the expected count)
 count(tmprl_proxy_tls_cert_expiry_timestamp_seconds{file="cert"})
 
 # 2. No proxy is on a leaf issued before the switch (must be empty)
@@ -624,206 +305,249 @@ tmprl_proxy_tls_cert_expiry_timestamp_seconds{file="cert"}
 
 # 3. No recent reload failures (must be empty)
 increase(tmprl_proxy_tls_reloads_total{result="failure"}[15m]) &gt; 0</code></pre>
-<p>The skew is a clock-skew allowance between Vault and the clock that records the
-switch. A leaf issued within <em>skew</em> before the switch would count as new, so
-the skew must stay far below <em>R</em>: the demo uses 5 seconds on one host clock;
-production uses its measured clock-skew bound.</p>
-<p>Pods restarted during the rollover change the expected set. The script compares
-against the current ready replica count of each proxy Deployment, not Pod names.
-Prometheus keeps returning a terminated Pod's series for several minutes, so the gate
-evaluates only series whose Pod Kubernetes currently reports as Ready (observed
-during the migration rollout: 8 series for 4 Ready Pods).</p>
-<p>The gate is cross-checked once, independent of metrics: for one proxy Pod per
-namespace, read the mounted certificate and print its issuer, serial, and NotAfter
-with <code>openssl x509</code>. The issuer must be the new <code>ca-&lt;timestamp&gt;</code>
-and the NotAfter must match the gauge.</p>
+<ul>
+  <li>Condition 2 works because Vault leaves have a fixed lifetime: a leaf whose
+  NotAfter is later than <em>switch + L − skew</em> was issued after the switch, so by
+  the new issuer.</li>
+  <li>The skew allowance covers clock difference between Vault and whatever records
+  the switch time. It must stay far below <em>R</em>, or a leaf issued just before the
+  switch passes as new.</li>
+  <li>The expected count comes from the current ready replicas of every proxy
+  Deployment, and the gate evaluates only series from Pods currently Ready. Metrics
+  systems keep returning a terminated Pod's series for several minutes.</li>
+  <li>The gate is only as complete as the proxy inventory. A client that presents a
+  certificate from the old CA without going through a proxy is invisible to it; see
+  <a href="#risks">Risks</a>.</li>
+</ul>
 
-<h3 id="observability">Observability</h3>
-<p>Dashboard <strong>Temporal Proxy: Certificate Rotation</strong>:</p>
+<h3 id="migration">Migration from today</h3>
+<p>The first rollover moves clients from today's manually generated CA to a Vault
+issuer. It is the only step in the design that restarts Pods.</p>
+<ol class="phases">
+  <li><strong>Introduce the proxy with today's certificate.</strong> Deploy the proxy
+  in each client namespace mounting the existing certificate and key, then repoint
+  Workers and Callers at it. Nothing about trust changes.</li>
+  <li><strong>Snapshot, create issuer, add trust.</strong> As steps 1 to 3. Today's CA
+  is recorded as the old CA.</li>
+  <li><strong>Switch (migration form).</strong> Apply the ESO resources, wait until
+  each Secret holds a leaf from the new issuer, then roll each proxy Deployment onto
+  that Secret. A new proxy Pod that cannot connect never becomes Ready, so a rejected
+  leaf stalls the rollout while the old Pods keep serving.</li>
+  <li><strong>Verify and retire.</strong> As steps 5 and 6. Today's CA is removed like
+  any old CA.</li>
+</ol>
+
+<h3 id="observability">Alerts</h3>
 <div class="table-wrap"><table>
-  <thead><tr><th>Panel</th><th>Query basis</th><th>What a rotation looks like</th></tr></thead>
+  <thead><tr><th>Alert</th><th>Basis</th><th>Means</th></tr></thead>
   <tbody>
-    <tr><td>Leaf time to expiry, per Pod</td><td><code>tmprl_proxy_tls_cert_expiry_timestamp_seconds{file="cert"} - time()</code></td><td>Sawtooth: falls steadily, jumps back up at each reload.</td></tr>
-    <tr><td>Leaf NotAfter, per Pod</td><td>Same gauge, as a timestamp</td><td>Step changes at each renewal; after Switch every series steps past <em>switch + L</em>.</td></tr>
-    <tr><td>Reloads by result</td><td><code>increase(tmprl_proxy_tls_reloads_total[5m])</code> by <code>result</code></td><td>Success spikes every R; any failure bar is an incident.</td></tr>
-    <tr><td>Gate status</td><td>Count of Pods failing gate query 2, against the switch time variable</td><td>Falls to zero as proxies move to the new issuer.</td></tr>
-    <tr><td>Proxied request rate and errors</td><td><code>tmprl_proxy_server_requests_total</code> by <code>code</code>; <code>tmprl_proxy_router_forwarding_errors_total</code> by <code>reason</code></td><td>Flat rate and no TLS errors across renewals and the rollover.</td></tr>
-    <tr><td>Rotation annotations</td><td>Grafana annotations posted by scripts 03, 04, and 06</td><td>Vertical markers at Add Trust, Switch, and Retire.</td></tr>
+    <tr><td>Leaf renewal stalled</td><td>Loaded leaf time to expiry below <em>L − 2R</em></td><td>Two refreshes missed: ESO, Vault, or Secret delivery is broken.</td></tr>
+    <tr><td>Proxy rejected new material</td><td><code>tmprl_proxy_tls_reloads_total{result="failure"}</code> increased</td><td>A bad leaf was delivered; the proxy keeps its previous one.</td></tr>
+    <tr><td>Proxy missing</td><td>Reporting proxies below each Deployment's replica count</td><td>A proxy is down or not scraped, and would also block the gate.</td></tr>
+    <tr><td>Calls failing at the proxy</td><td><code>tmprl_proxy_router_forwarding_errors_total</code> increased</td><td>Temporal Cloud or the network is rejecting the proxy's calls.</td></tr>
+    <tr><td>Issuer approaching expiry</td><td>Current issuer NotAfter, read from Vault, within the rollover lead time</td><td>Time to start a rollover. Not a proxy metric.</td></tr>
   </tbody>
 </table></div>
 
-<h4>Alerts</h4>
-<p>Prometheus alert rules, rendered from <code>rules.yml.tmpl</code> with the
-thresholds derived from the timing settings:</p>
-<pre><code># Leaf renewal stalled: two refreshes missed
-(tmprl_proxy_tls_cert_expiry_timestamp_seconds{file="cert"} - time()) &lt; ($leaf_ttl - 2 * $refresh_interval)
-
-# Proxy rejected new material
-increase(tmprl_proxy_tls_reloads_total{result="failure"}[10m]) &gt; 0
-
-# A proxy stopped reporting (per namespace, against its replica count)
-count by (namespace) (tmprl_proxy_tls_cert_expiry_timestamp_seconds{file="cert"}) &lt; $replicas
-
-# Calls to Temporal Cloud failing at the proxy
-increase(tmprl_proxy_router_forwarding_errors_total[5m]) &gt; 0</code></pre>
-<p>Issuer expiry is not a proxy metric. The proxy's <code>file="ca"</code> series
-tracks the CA used to verify Temporal Cloud's server certificate. A small script,
-<code>check-issuer-expiry.sh</code>, reads the current issuer's NotAfter from Vault and
-fails when it is closer than the rollover lead time; production would run it on a
-schedule or replace it with a Vault-side metric.</p>
-
-<h3 id="invariants">Invariants</h3>
+<h3 id="security">Security model</h3>
 <ul>
-  <li>The only CA a script removes from the Namespace is the Snapshot's old CA, by
-  <code>06-retire.sh</code>, after the gate passes. The demo Namespace is dedicated
-  to the demo, so the bootstrap CA is removable on the same terms.</li>
-  <li><code>04-switch.sh</code> refuses to run unless the new CA is verified in the
-  Namespace; <code>06-retire.sh</code> refuses to run unless the gate passes.</li>
-  <li>Every Temporal Cloud write uses the recorded resource version, so a concurrent
-  change makes the script fail instead of overwriting.</li>
-  <li>The Ops API key exists only in the operator's shell during the procedure.</li>
-  <li>ESO's Vault policy can issue leaves only.</li>
-  <li>No script prints a private key or secret value.</li>
+  <li>CA private keys are generated inside Vault and never exported. Nothing outside
+  Vault can sign a leaf.</li>
+  <li>ESO's Vault policy allows only issuing leaves from one role. The role restricts
+  common names, sets client-auth only, and does not store issued leaves.</li>
+  <li>A leaf's private key exists only in its Kubernetes Secret and the proxy that
+  mounts it. Applications have none.</li>
+  <li>The Temporal Cloud Ops API key is the most privileged credential involved: it
+  can change any Namespace's trust. Where it lives depends on the execution option and
+  is an <a href="#questions">open question</a>.</li>
+  <li>Only step 6 removes trust, only for the CA recorded at Snapshot, and only after
+  the gate passes. Every trust write uses the recorded resource version, so a
+  concurrent change fails the step instead of being overwritten.</li>
+  <li>The old issuer is disabled rather than deleted, so its certificate stays
+  available for audit and rollback.</li>
 </ul>
 
 <!-- ============================================================ -->
-<h2 id="deliverables">Deliverables</h2>
+<h2 id="decisions">Design Decisions &amp; Alternatives</h2>
+<div class="table-wrap"><table>
+  <thead><tr><th>Decision</th><th>Rationale</th><th>Alternative considered</th></tr></thead>
+  <tbody>
+    <tr><td>Temporal Proxy holds the client credential</td>
+      <td>One process type per cluster presents, reloads, and reports the certificate. Applications need no TLS reload logic and no restarts; the gate has one metric to query.</td>
+      <td>Each Worker and Caller loads and reloads its own certificate. Every application must implement reload correctly, and nothing reports which certificate each process presents, so retirement stays a judgment call.</td></tr>
+    <tr><td>Short-lived leaves from a long-lived Vault issuer</td>
+      <td>Renewal no longer touches Temporal Cloud trust or people. The CA changes only at its own, much longer interval.</td>
+      <td>Keep generating a new CA per renewal (today). Every renewal stays a trust change and a coordinated restart.</td></tr>
+    <tr><td>ESO delivers leaves</td>
+      <td>Already running at Acme. A Vault generator issues a new leaf on each refresh into an ordinary Kubernetes Secret; the proxy needs no Vault integration.</td>
+      <td>Vault Agent sidecar or Vault Secrets Operator: viable, but adds a component per Pod or a new operator. cert-manager with a Vault issuer: also viable; not reported as in use.</td></tr>
+    <tr><td>Retire the old CA on a metrics gate</td>
+      <td>Retirement is the only step that can cause an outage; the gate makes it depend on what every proxy reports it loaded.</td>
+      <td>Retire after a fixed wait. Silent on a proxy that never renewed.</td></tr>
+    <tr><td>Change trust through the Temporal Cloud Ops API</td>
+      <td>Supports list, add, and remove by fingerprint with request IDs and resource versions, giving idempotency and optimistic concurrency per step.</td>
+      <td>Change trust through Terraform Enterprise, as today. Keeps one source of truth but puts a plan and apply inside the rollover; see <a href="#questions">Open Questions</a>.</td></tr>
+    <tr><td>Disable the old issuer, do not delete it</td>
+      <td>Stops signing, keeps the certificate readable for audit and rollback.</td>
+      <td>Delete the issuer. Irreversible; nothing gained.</td></tr>
+  </tbody>
+</table></div>
 
+<!-- ============================================================ -->
+<h2 id="parameters">Production Parameters</h2>
+<p>The demo uses deliberately short values so a rollover is visible in minutes. Production
+values are Acme's decision; the constraints are not.</p>
+<div class="table-wrap"><table>
+  <thead><tr><th>Parameter</th><th>Constraint</th><th>Demo value</th><th>Production value</th></tr></thead>
+  <tbody>
+    <tr><td>Leaf lifetime <em>L</em></td><td>Tolerated ESO or Vault outage is about <em>L − R</em>.</td><td>5 minutes</td><td>TODO(author): Acme security team</td></tr>
+    <tr><td>ESO refresh interval <em>R</em></td><td>No more than <em>L / 3</em>. Sets how long a rollover waits.</td><td>1 minute</td><td>TODO(author)</td></tr>
+    <tr><td>CA (issuer) lifetime</td><td>Sets rollover frequency.</td><td>Demo default</td><td>TODO(author): Acme security team</td></tr>
+    <tr><td>Rollover lead time</td><td>Longer than the time to approve and run a rollover across every Namespace.</td><td>Demo default</td><td>TODO(author)</td></tr>
+    <tr><td>Gate clock-skew allowance</td><td>Far below <em>R</em>; at least the measured Vault-to-runner clock skew.</td><td>5 seconds</td><td>TODO(author): measured bound</td></tr>
+    <tr><td>Proxy replicas per cluster</td><td>Enough that one Pod's loss does not interrupt Temporal traffic.</td><td>2</td><td>TODO(author)</td></tr>
+  </tbody>
+</table></div>
+
+<!-- ============================================================ -->
+<h2 id="options">Rollover Execution Options</h2>
+<p>Once leaf renewal is automatic, nothing day to day needs orchestration. The rollover
+sequence can be executed in several ways. Each option runs the same step contracts;
+they differ in who runs the steps, how durably, and across how many Temporal Cloud
+Namespaces.</p>
+<div class="table-wrap"><table>
+  <thead><tr><th>Option</th><th>Shape</th><th>Durability</th><th>Suits</th><th>Costs</th></tr></thead>
+  <tbody>
+    <tr><td>Runbook scripts</td>
+      <td>An operator runs one script per step, per Namespace, reading each result before the next.</td>
+      <td>Rollover state in a Kubernetes ConfigMap; every step is idempotent and resumable by re-running it. Waits are attended.</td>
+      <td>Few Namespaces and infrequent rollovers.</td>
+      <td>Operator time per Namespace. The Ops API key is held in the operator's shell for the rollover.</td></tr>
+    <tr><td>Command-line tool</td>
+      <td>One command runs the steps in order for a list of Namespaces, stopping at the gate or on any failed verification.</td>
+      <td>Same state record per Namespace; resumes by re-running. A closed terminal ends the run, and long waits occupy the operator's session.</td>
+      <td>Tens of Namespaces rolled over in an attended session.</td>
+      <td>A tool to build, version, and distribute. No Worker or new owning team.</td></tr>
+    <tr><td>RotateCredential Workflow</td>
+      <td>Each step is an Activity; the gate is a durable wait. One Workflow per rollover fans out across N Namespaces. It supervises only credential material: the Vault issuer, each Namespace's accepted CAs, and the leaf each proxy reports it loaded.</td>
+      <td>Durable across hours or days of waiting, process restarts, and operator handoffs. Retries, history, and approvals (Signals or Updates) come from Temporal.</td>
+      <td>Many Namespaces, frequent or scheduled rollovers, unattended runs.</td>
+      <td>A Worker, an owning team and on-call, and a long-lived, secured holder of the Ops API key.</td></tr>
+  </tbody>
+</table></div>
+<p>Because Temporal Proxy is the only holder of Temporal Cloud client credentials, no
+option selects, restarts, or inspects Worker and Caller Deployments. The requirement
+with the largest effect on the choice is CA topology: one CA shared across Namespaces
+makes a rollover one issuer switch, N trust changes, and one gate across every proxy;
+one CA per Namespace or per trust domain makes it N independent rollovers. The demo
+implements the runbook scripts; this proposal does not recommend an option until the
+<a href="#questions">open questions</a> are answered.</p>
+
+<!-- ============================================================ -->
+<h2 id="evolution">Evolution</h2>
+<p>The proposal is designed so each of these can be adopted later without revisiting
+the rest.</p>
+<div class="table-wrap"><table>
+  <thead><tr><th>Possibility</th><th>Trigger</th><th>What changes</th></tr></thead>
+  <tbody>
+    <tr><td>Scripts, then a tool, then a Workflow</td><td>Namespace count or rollover frequency grows past attended operation.</td><td>Only the runner. The step contracts, gate, and state record carry over.</td></tr>
+    <tr><td>Scheduled rollovers</td><td>Rollovers become routine enough to run unattended.</td><td>A Temporal Schedule starts the RotateCredential Workflow ahead of issuer expiry; approval becomes a Signal or Update rather than an operator running a step.</td></tr>
+    <tr><td>Per-Namespace or per-trust-domain CAs</td><td>Security requirements call for separation between environments, regions, or Namespaces.</td><td>More issuers and Vault roles, one rollover per CA. The gate filters to the proxies that present each CA.</td></tr>
+    <tr><td>Trust changes through Terraform</td><td>Acme keeps Terraform as the single source of Namespace configuration.</td><td>Steps 3 and 6 become a Terraform change and apply instead of an Ops API call; verifications stay the same.</td></tr>
+    <tr><td>Issuer expiry from Vault-side metrics</td><td>Vault metrics are already collected centrally.</td><td>Replaces the scheduled check that reads the issuer's NotAfter from Vault.</td></tr>
+    <tr><td>Proxy listener TLS</td><td>Policy requires encryption or authentication between applications and the proxy inside the cluster.</td><td>Proxy and application configuration only; Temporal Cloud trust is unaffected.</td></tr>
+    <tr><td>Other credential types at the proxy</td><td>Acme moves some Namespaces from mTLS to API keys.</td><td>The proxy's upstream configuration changes; applications do not. Not evaluated in this proposal.</td></tr>
+  </tbody>
+</table></div>
+
+<!-- ============================================================ -->
+<h2 id="risks">Risks &amp; Failure Modes</h2>
+<div class="table-wrap"><table>
+  <thead><tr><th>Risk</th><th>Impact</th><th>Likelihood</th><th>Mitigation</th></tr></thead>
+  <tbody>
+    <tr><td>A client presents a certificate from the old CA without going through a proxy (for example, Callers in a separate cluster not yet migrated)</td><td><span class="badge high">High</span></td><td><span class="badge medium">Medium</span></td><td>Inventory every client of every Namespace before the first retirement. The gate only sees proxies; removing the old CA breaks any client it does not see.</td></tr>
+    <tr><td>The proxy becomes a single point of failure for Temporal traffic</td><td><span class="badge high">High</span></td><td><span class="badge low">Low</span></td><td>Multiple replicas, a PodDisruptionBudget, and the proxy-missing and forwarding-error alerts.</td></tr>
+    <tr><td>ESO or Vault unavailable longer than <em>L − R</em></td><td><span class="badge high">High</span></td><td><span class="badge low">Low</span></td><td>Size <em>L</em> to exceed Vault's recovery objective. The renewal-stalled alert fires after two missed refreshes. A proxy restarted with an expired leaf refuses to start until ESO writes a valid one.</td></tr>
+    <tr><td>Terraform restores a CA the rollover removed, or removes one it added</td><td><span class="badge high">High</span></td><td><span class="badge medium">Medium</span></td><td>Decide who owns accepted client CAs before the first rollover; see <a href="#questions">Open Questions</a>.</td></tr>
+    <tr><td>TLS hot reload is not in a tagged Temporal Proxy release</td><td><span class="badge medium">Medium</span></td><td><span class="badge high">High</span> (today)</td><td>The demo builds from a pinned main-branch commit. Production adoption waits for a release that includes hot reload and its metrics, or accepts a pinned build.</td></tr>
+    <tr><td>Metrics from Worker and Caller clusters are not queryable in one place</td><td><span class="badge medium">Medium</span></td><td><span class="badge medium">Medium</span></td><td>The gate needs a view of every proxy. Either centralize proxy metrics or evaluate the gate per cluster and combine the results.</td></tr>
+    <tr><td>Ops API key misuse or leak</td><td><span class="badge high">High</span></td><td><span class="badge low">Low</span></td><td>Hold it only where the chosen execution option needs it, for as short a time as that option allows; use a service account with the narrowest role that can change accepted CAs.</td></tr>
+  </tbody>
+</table></div>
+
+<!-- ============================================================ -->
+<h2 id="evidence">Evidence from the Demo</h2>
+<p>The <a href="demo-spec.html">demo</a> runs this proposal on one k3d cluster with
+dev-mode Vault, ESO, two proxy deployments standing in for the Worker and Caller
+clusters, and a real Temporal Cloud Namespace. Results to date are recorded in
+<a href="PROGRESS.md">PROGRESS.md</a>.</p>
+<div class="table-wrap"><table>
+  <thead><tr><th>Claim</th><th>Demo evidence</th></tr></thead>
+  <tbody>
+    <tr><td>The proxy reloads a new leaf without a restart or failed call</td><td>Observed across consecutive ESO renewals.</td></tr>
+    <tr><td>Migration from a manual CA to a Vault issuer is a single rolling restart of the proxies</td><td>Observed.</td></tr>
+    <tr><td>The gate blocks retirement while any proxy is stale and names it</td><td>Implemented; full rollover and failure-injection run pending.</td></tr>
+  </tbody>
+</table></div>
+<p>The demo does not prove multi-cluster behavior, production Vault authentication,
+Acme's lifetime policy, or proxy behavior under production load.</p>
+
+<!-- ============================================================ -->
+<h2 id="deliverables">Deliverables</h2>
 <h3>Runbook</h3>
 <ul>
   <li><strong>Audience:</strong> the operator performing a CA rollover, and the Vault,
   Kubernetes, and Temporal Cloud owners who approve it.</li>
-  <li><strong>Lives at:</strong> <code>runbooks/credentials-management/temporal-proxy-vault-eso/</code>
-  (<code>rotation.md</code> plus <code>scripts/</code>).</li>
+  <li><strong>Lives at:</strong> <code>runbooks/credentials-management/temporal-proxy-vault-eso/</code></li>
   <li><strong>Outline:</strong>
     <ol>
       <li>Before you start: lead time, approvals, rollback rules.</li>
       <li>Steps 0 to 6, one section each: command, what it changes, expected output,
-      what to do when it exits non-zero.</li>
+      what to do when it fails.</li>
       <li>Gate not passing: walk the delivery chain backward from the stale proxy.</li>
       <li>Rollback and emergency rollover.</li>
       <li>First run: migration from a manual CA.</li>
       <li>Standing checks: alerts and the issuer expiry check.</li>
+      <li>Demo values versus production values.</li>
     </ol>
   </li>
 </ul>
-
 <h3>Demo</h3>
 <ul>
   <li><strong>Lives at:</strong> <code>demos/credentials-management/temporal-proxy-vault-eso/</code></li>
-  <li><strong>Scenario:</strong> bring up the cluster with the manual CA; watch traffic
-  through the proxies; migrate to Vault; watch three renewals; run a rollover; break
-  one namespace's <code>ExternalSecret</code> and watch the retire script refuse; fix
-  it and retire.</li>
+  <li><strong>Specified in:</strong> <a href="demo-spec.html">demo-spec.html</a></li>
   <li><strong>Proves:</strong> renewal without restarts or trust changes; the gate
   blocks an unsafe retirement and names the cause; traffic continues through every
   stage.</li>
-  <li><strong>Does not prove:</strong> multi-cluster behavior, production Vault
-  authentication, Acme's lifetime policy, or proxy behavior under production load.</li>
 </ul>
 
 <!-- ============================================================ -->
-<h2 id="implementation">Implementation Strategy</h2>
-<ol class="phases">
-  <li><strong>Proxy path.</strong> k3d cluster, locally built proxy image, bootstrap
-  Secret from the manual CA, CLI probes in both namespaces, Prometheus and Grafana
-  with the expiry and reload panels. Replace the bootstrap Secret by hand once to see
-  hot reload. <em>Done when</em> probes succeed through Service DNS and the gauge
-  moves after the manual replacement.</li>
-  <li><strong>Vault PKI and ESO.</strong> Vault dev mode, PKI mount, role, Kubernetes
-  auth, ESO, and the migration run. <em>Done when</em> three consecutive renewals
-  reload with no probe errors.</li>
-  <li><strong>Rollover scripts.</strong> Steps 0 to 6, rollback, the
-  <code>ExternalSecret</code> failure injection, dashboard annotations, alert rules,
-  the timing settings, and <code>demo-rollover.sh</code>, which runs steps 0 to 6 in
-  one command.
-  <em>Done when</em> the failure case exits non-zero and the repaired run
-  completes.</li>
-  <li><strong>Sample Workflow.</strong> Worker and Starter replace the probes.
-  <em>Done when</em> executions complete continuously across a full rollover.</li>
-  <li><strong>Runbook text.</strong> Written from the scripts' actual output.</li>
-</ol>
-
-<h3>Critical files</h3>
-<ul>
-  <li><code>specs/temporal-credential-operations/temporal-proxy-vault-eso/spec.html</code> and <code>PROGRESS.md</code></li>
-  <li><code>runbooks/credentials-management/temporal-proxy-vault-eso/</code> (to create)</li>
-  <li><code>demos/credentials-management/temporal-proxy-vault-eso/</code> (to create)</li>
-</ul>
-
-<!-- ============================================================ -->
-<h2 id="validation">Validation Strategy</h2>
-<h3>Runbook Validation</h3>
+<h2 id="questions">Open Questions</h2>
+<h3>Needed before production adoption</h3>
 <ul class="checklist">
-  <li>Every script runs as written against the demo cluster and a real Temporal Cloud
-  Namespace.</li>
-  <li>Every script is re-run after success and after an injected mid-way failure.</li>
-  <li>Output is reviewed for secret values.</li>
+  <li>OPEN QUESTION: Client inventory. Which Workers and Callers, in which clusters,
+  present certificates signed by the current CA? Do Callers share the Workers' CA?</li>
+  <li>OPEN QUESTION: Ownership of accepted client CAs. Does Terraform Enterprise stop
+  managing that field (for example with <code>ignore_changes</code>) so the rollover
+  owns it, or does the rollover drive Terraform?</li>
+  <li>OPEN QUESTION: Vault PKI placement. Which mount, role, and Kubernetes auth roles
+  the infrastructure team will provide, and who approves issuer creation and switch.</li>
+  <li>OPEN QUESTION: Where proxy metrics land, and whether one query can see every
+  proxy across Worker and Caller clusters.</li>
+  <li>OPEN QUESTION: Proxy placement. One proxy per client namespace, per cluster, or
+  per Temporal Cloud Namespace, given that clusters and Namespaces are not one to
+  one.</li>
 </ul>
-<h3>Demo Validation</h3>
-<ul class="checklist">
-  <li>Runs from a clean machine with only the documented local inputs.</li>
-  <li>The dashboard shows each stage listed in the scenario.</li>
-  <li>The Namespace's accepted CA set at the end matches the invariants.</li>
-</ul>
-
-<!-- ============================================================ -->
-<h2 id="risks">Risks &amp; Mitigation</h2>
-<div class="table-wrap"><table>
-  <thead><tr><th>Risk</th><th>Impact</th><th>Likelihood</th><th>Mitigation</th></tr></thead>
-  <tbody>
-    <tr><td>The demo Namespace does not accept mTLS, or the proxy silently uses an API key</td><td><span class="badge high">High</span></td><td><span class="badge medium">Medium</span></td><td>Preflight confirms the accepted CA list is non-empty; proxy config has no <code>credentials</code> block.</td></tr>
-    <tr><td>A script removes a CA another client of the demo Namespace depends on</td><td><span class="badge high">High</span></td><td><span class="badge low">Low</span></td><td>The demo requires a dedicated Namespace (stated in <code>.env.example</code> and the demo README). Only the Snapshot's old CA is removable, and only after the gate passes.</td></tr>
-    <tr><td>Proxy main branch changes TLS behavior before a release</td><td><span class="badge medium">Medium</span></td><td><span class="badge medium">Medium</span></td><td>Pin the commit used to build the image; re-validate on each bump.</td></tr>
-    <tr><td>Kubelet sync is slower than assumed</td><td><span class="badge low">Low</span></td><td><span class="badge medium">Medium</span></td><td>ESO refresh to proxy reload takes under a minute to about 2 minutes (K + P plus scrape and poll intervals). <code>05-verify.sh</code> polls the gate every 15 seconds from <em>switch + R</em> instead of waiting a fixed time.</td></tr>
-    <tr><td>ESO or Vault unavailable longer than the leaf lifetime, including the demo host sleeping</td><td><span class="badge high">High</span></td><td><span class="badge medium">Medium</span> (demo)</td><td>Proxies present expired leaves and Temporal Cloud rejects them; a proxy that restarts then fails to start until ESO delivers a valid leaf. The renewal-stalled alert fires after two missed refreshes. Production leaf lifetimes are days. In the demo, preflight refuses to start a rollover when a loaded leaf expires within 5 minutes, and <code>force-refresh.sh</code> recovers right after the host wakes.</td></tr>
-    <tr><td>Dev-mode Vault loses state on restart mid-rollover</td><td><span class="badge medium">Medium</span></td><td><span class="badge low">Low</span></td><td>Demo only. Rollback restores trust from the ConfigMap; the runbook states production Vault is persistent.</td></tr>
-    <tr><td>The scripts are mistaken for production-ready automation</td><td><span class="badge medium">Medium</span></td><td><span class="badge medium">Medium</span></td><td>Runbook marks demo-only values (dev Vault, short TTLs, Kubernetes auth) and lists what changes for production.</td></tr>
-  </tbody>
-</table></div>
-
-<!-- ============================================================ -->
-<h2 id="dependencies">Dependencies</h2>
-<h3>External</h3>
-<ul>
-  <li>k3d, kubectl, Helm, <code>tcld</code>, Temporal CLI, <code>openssl</code>, <code>jq</code>. The Vault CLI runs inside the Vault Pod.</li>
-  <li>Temporal Proxy source at a pinned main-branch commit that includes TLS hot reload.</li>
-  <li>Vault and ESO Helm charts at pinned versions.</li>
-  <li>A Temporal Cloud Namespace dedicated to the demo, using mTLS with the
-  bootstrap CA accepted.</li>
-  <li>An Ops API key for a user or service account with an account-level role
-  (Global Admin).</li>
-</ul>
-
-<!-- ============================================================ -->
-<h2 id="questions">Open Questions &amp; Notes</h2>
-<h3>Requirements needed before choosing an execution option</h3>
+<h3>Needed before choosing an execution option</h3>
 <ul class="checklist">
   <li>OPEN QUESTION: CA topology. One client CA shared by every Namespace, one per
   Namespace, or one per trust domain (for example per environment or per region)?</li>
-  <li>OPEN QUESTION: Acme security team requirements: CA lifetime and rollover
+  <li>OPEN QUESTION: Acme security team requirements: CA and leaf lifetimes, rollover
   frequency, separation between Namespaces or environments, who may approve trust
   changes, and where the Ops API key may be held.</li>
   <li>OPEN QUESTION: Number of Temporal Cloud Namespaces in scope, now and planned.</li>
   <li>TODO(author): Which team would own and operate a command-line tool or a
   RotateCredential Workflow.</li>
-</ul>
-<h3>Implementation Notes</h3>
-<ul>
-  <li>Temporal Proxy refuses to start when its configured client certificate has
-  expired, so an expired leaf in the Secret turns a proxy restart into a crash loop
-  until ESO writes a valid one.</li>
-  <li>The bootstrap certificate is a CA certificate
-  (<code>CA:TRUE</code>), not a leaf. Once trusted by the Namespace it can be
-  presented directly, but <code>rotate-manual-leaf.sh</code> signs a proper
-  client leaf with it instead.</li>
-  <li>Temporal Proxy requires <code>tls.ca</code> on an upstream whenever a client
-  certificate is set; the demo uses the image's system CA bundle.</li>
-  <li>Temporal Proxy exits at startup when its upstream connection does not become
-  ready, so a rejected credential shows up as a crash loop, not a running proxy with
-  failing calls.</li>
-  <li>tcld reads its API key from <code>TEMPORAL_CLOUD_API_KEY</code>; scripts export
-  it from <code>TEMPORAL_CLOUD_OPS_API_KEY</code> for the process only.</li>
 </ul>
 
 <!-- ============================================================ -->
@@ -833,7 +557,6 @@ schedule or replace it with a Vault-side metric.</p>
   <li><a href="https://docs.temporal.io/cloud/tcld/namespace">tcld namespace commands</a></li>
   <li><a href="https://developer.hashicorp.com/vault/docs/secrets/pki">Vault PKI secrets engine</a></li>
   <li><a href="https://external-secrets.io/latest/api/generator/vault/">External Secrets Operator: Vault generator</a></li>
-  <li><a href="https://k3d.io/">k3d</a></li>
 </ul>
 
 <footer>Spec format: HTML with the shared stylesheet <code>specs/assets/spec.css</code>. Review feedback goes in <a href="PROGRESS.md">PROGRESS.md</a>.</footer>

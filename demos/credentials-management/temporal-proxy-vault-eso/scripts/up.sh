@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Milestone 1: create the k3d cluster, import the proxy image, and deploy a
+# Create the k3d cluster, import the proxy image, and deploy a
 # Temporal Proxy plus CLI probe in each client namespace, with Prometheus and
 # Grafana. The proxies present the manually generated bootstrap material.
 #
 # Idempotent: re-running converges on the same state.
 #
-# Verify: ./scripts/verify-m1.sh
+# Verify: ./scripts/verify-proxies.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 require_tools docker k3d kubectl openssl
 resolve_target
@@ -56,4 +56,4 @@ kc -n "$OBSERVABILITY_NAMESPACE" rollout status deploy/grafana --timeout=180s
 
 "$DEMO_DIR/scripts/apply-settings.sh"
 
-log "Up. Next: ./scripts/verify-m1.sh, then ./scripts/observe.sh for Grafana."
+log "Up. Next: ./scripts/verify-proxies.sh, then ./scripts/observe.sh for Grafana."

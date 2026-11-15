@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verify milestone 2 after the migration switch. Exits non-zero on the first
+# Verify the migration switch. Exits non-zero on the first
 # failed check.
 #
 #  1. Every proxy replica is Ready and mounts the ESO-managed Secret.
@@ -74,4 +74,4 @@ for ns in "${CLIENT_NAMESPACES[@]}"; do
   log "PASS $ns: $ok probe calls succeeded in the last $PROBE_WINDOW, 0 failed ($since_switch failed since the switch)"
 done
 
-log "Milestone 2 migration verified. Next: ./scripts/watch-renewals.sh"
+log "Migration verified. Next: ./scripts/rollover/05-verify.sh, then 06-retire.sh to retire the bootstrap CA"

@@ -42,8 +42,16 @@ specs/
 └── temporal-credential-operations/
     └── <concern-name>/
         ├── spec.html               # What, why, and the approach
+        ├── demo-spec.html          # Optional: how the demo is built
         └── PROGRESS.md             # Status, review feedback, roadmap
 ```
+
+`spec.html` is written for the customer team that will evaluate and operate
+the approach: the problem, the proposal, alternatives, risks, open
+questions, and how it can evolve. When the demo needs more design than the
+spec's Deliverables section can hold (topology, components, scripts,
+demo-only values), put it in `demo-spec.html` and link the two. The spec
+governs where they differ.
 
 When a concern has more than one distinct approach worth demoing separately
 (for example, two different tools that solve the same operational problem),
@@ -116,6 +124,7 @@ Leave feedback in `PROGRESS.md` under Feedback Items.
 ### Credentials Management: Temporal Proxy + Vault PKI + ESO
 
 - **Spec:** `specs/temporal-credential-operations/temporal-proxy-vault-eso/`
+  (`spec.html` is the proposal; `demo-spec.html` specifies the demo)
 - **Demo:** `demos/credentials-management/temporal-proxy-vault-eso/`
 - **Goal:** Rotate the client certificate authority (CA) Temporal Cloud
   trusts, with Vault PKI signing short-lived leaves, External Secrets

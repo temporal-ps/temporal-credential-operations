@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verify milestone 1. Exits non-zero on the first failed check.
+# Verify the proxy path with the manual CA. Exits non-zero on the first failed check.
 #
 #  1. Every proxy replica is Ready.
 #  2. Each CLI probe has recent successful calls through its namespace's proxy
@@ -48,4 +48,4 @@ failures="$(prom_query 'sum(tmprl_proxy_tls_reloads_total{result="failure"}) or 
 [ "$failures" = "0" ] || fail "proxies report $failures TLS reload failures"
 log "PASS no TLS reload failures"
 
-log "Milestone 1 verified."
+log "Proxy path verified."

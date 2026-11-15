@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Milestone 1 hot-reload check, still in the "manual CA" world.
+# Hot-reload check while the proxies still use the manual CA.
 #
 # Signs a short-lived client leaf with the bootstrap CA key (locally, as the
 # manual procedure would), replaces Secret temporal-cloud-leaf-manual in every
