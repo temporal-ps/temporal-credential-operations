@@ -14,6 +14,8 @@ shows two things:
 1. **Renewal:** leaves renew every minute with no restarts and no Temporal
    Cloud change.
 2. **Rotate:** a complete CA rollover, plus what happens when something breaks.
+3. **Outage:** what happens, and which alerts fire, when leaves stop renewing
+   until one expires.
 
 ## What it runs
 
@@ -168,6 +170,53 @@ Steps back one stage per run and never removes the old CA. After the switch it
 points the role back at the old issuer; run it again to remove the new CA from
 the Namespace. Verify: `PASS role ... signs with <old issuer>`, then
 `PASS accepted CAs equal the Snapshot`.
+
+## 4. Simulate an outage: leaves stop renewing
+
+The failure this design must never let happen unnoticed: renewal stops, nobody
+acts, and the proxy's leaf expires. No rollover is needed. Break leaf delivery
+for the callers namespace and leave it broken:
+
+```bash
+./scripts/inject-eso-failure.sh callers
+```
+
+Verify: `PASS callers: ExternalSecret Ready=False`. Watch Prometheus Alerts
+(<http://localhost:9090/alerts>), Grafana's **Leaf NotAfter** panel, and the
+callers probe (`./scripts/observe.sh`). With the default settings (5-minute
+leaves, 1-minute refresh), one run went like this:
+
+| Time after injection | What you see | Severity |
+|---|---|---|
+| 0 | Delivery broken; the callers proxies keep their current leaf (253 s left) | |
+| about 2 min | **TemporalProxyLeafRenewalStalled** pending (under 180 s left) | ticket |
+| about 3 min | **TemporalProxyLeafRenewalStalled** firing; probe calls still succeed | ticket |
+| about 4.5 min | The leaf expires. Every callers probe call fails with `tls: expired certificate`; the proxy Pods stay Running | |
+| at expiry | **TemporalProxyLeafExpired** firing | page |
+| about 1 to 2 min after expiry | **TemporalProxyCallsFailing** firing (over 5% of calls failing for 1 minute) | page |
+
+The workers namespace is unaffected throughout. Exact times depend on how
+fresh the callers leaf was when you broke delivery.
+
+Repair it:
+
+```bash
+./scripts/inject-eso-failure.sh callers --restore
+```
+
+Verify: `PASS callers: ExternalSecret Ready and a new leaf delivered`.
+
+In the same run, with no proxy restarts:
+
+| Time after restore | What you see |
+|---|---|
+| about 1 min | The first callers proxy reloads a valid leaf; some probe calls succeed |
+| about 2 min | **TemporalProxyLeafExpired** clears |
+| about 2.5 min | Every probe call succeeds |
+| about 4.5 min | **TemporalProxyCallsFailing** clears (its 2-minute rate window drains) |
+
+Add `./scripts/force-refresh.sh callers` after restoring to skip waiting for the
+next scheduled refresh.
 
 ## Timing settings
 

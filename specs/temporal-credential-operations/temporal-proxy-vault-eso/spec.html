@@ -525,11 +525,13 @@ issuer. It is the only step in the design that restarts Pods.</p>
 </ol>
 
 <h3 id="observability">Alerts</h3>
-<p>Severity follows impact. Two alerts mean calls are failing now and page
-on-call: <strong>calls failing at the proxy</strong> and <strong>no proxy serving in a
-cluster</strong>. The rest fire while traffic is still healthy, because the proxy keeps
-serving its last valid leaf. They open a ticket: each is a deadline that says how
-long remains before calls start failing.</p>
+<p>Severity follows impact. Three alerts mean calls are failing now and page
+on-call: <strong>loaded leaf expired</strong>, <strong>calls failing at the
+proxy</strong>, and <strong>no proxy serving in a cluster</strong>. The rest fire while
+traffic is still healthy, because the proxy keeps serving its last valid leaf. They
+open a ticket: each is a deadline that says how long remains before calls start
+failing. An expiring leaf therefore alerts twice: a ticket while there is still time,
+and a page once it is past due.</p>
 <div class="table-wrap"><table>
   <thead><tr><th>Alert</th><th>Severity</th><th>Fires when</th><th>Traffic now</th><th>Time until calls fail</th><th>First response</th></tr></thead>
   <tbody>
@@ -538,6 +540,11 @@ long remains before calls start failing.</p>
       <td>Healthy. The proxy presents its last valid leaf.</td>
       <td>That leaf's remaining lifetime, at most <em>L − 2R</em>. Then Temporal Cloud rejects it, and a restarted proxy cannot start.</td>
       <td>Walk the delivery chain backward: <code>ExternalSecret</code> status, ESO's Vault login, Vault availability. Force a refresh once fixed.</td></tr>
+    <tr><td>Loaded leaf expired</td><td><span class="badge high">Page</span></td>
+      <td>A proxy's loaded leaf is past its NotAfter. Follows leaf renewal stalled when nobody fixed delivery in time.</td>
+      <td><strong>Impaired.</strong> Temporal Cloud rejects the expired leaf, so every call through that proxy fails. The proxy Pod keeps running.</td>
+      <td>Now.</td>
+      <td>Restore delivery, then force a refresh. Proxies pick up the new leaf on their next poll without a restart.</td></tr>
     <tr><td>Proxy rejected new material</td><td><span class="badge medium">Ticket</span></td>
       <td>A reload failed: the delivered certificate or key is unusable.</td>
       <td>Healthy. The proxy keeps its previous leaf.</td>
@@ -550,14 +557,14 @@ long remains before calls start failing.</p>
       <td>Check the Pods. A crash loop after a restart usually means an expired or rejected leaf.</td></tr>
     <tr><td>No proxy serving in a cluster</td><td><span class="badge high">Page</span></td>
       <td>Every proxy Pod in a cluster is down.</td>
-      <td><strong>Impaired.</strong> Calls from that cluster are failing. With no proxy running there are no forwarding errors, so this alert covers the case.</td>
+      <td><strong>Impaired.</strong> Calls from that cluster are failing. With no proxy running there are no request metrics, so this alert covers the case.</td>
       <td>Now.</td>
       <td>Check the Pods. If they crash loop on an expired leaf, restore delivery and force a refresh.</td></tr>
     <tr><td>Calls failing at the proxy</td><td><span class="badge high">Page</span></td>
-      <td>The proxy's forwarding errors increased.</td>
-      <td><strong>Impaired.</strong> Calls from that cluster are failing.</td>
+      <td>More than 5% of calls through a cluster's proxies fail with an upstream error (<code>Unavailable</code>, <code>Internal</code>, or <code>Unknown</code>) for a minute.</td>
+      <td><strong>Impaired.</strong> Calls from that cluster are failing, whatever the cause.</td>
       <td>Now.</td>
-      <td>Read the error reason: a TLS rejection points at an expired leaf or removed trust; anything else at the network or Temporal Cloud.</td></tr>
+      <td>If loaded leaf expired is also firing, the leaf is the cause. Otherwise check the proxy logs: a TLS rejection points at removed trust; anything else at the network or Temporal Cloud.</td></tr>
     <tr><td>Issuer approaching expiry</td><td><span class="badge medium">Ticket</span></td>
       <td>The current issuer expires within the rollover lead time. Read from Vault, not a proxy metric.</td>
       <td>Healthy.</td>

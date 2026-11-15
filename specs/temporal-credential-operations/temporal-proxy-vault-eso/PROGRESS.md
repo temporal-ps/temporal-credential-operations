@@ -252,6 +252,22 @@ CLI runs inside the Vault Pod, so operators need no local Vault install.
   Proxy v1.1.0, and v1.2.0 contains the demo's pinned commit, so the "hot
   reload not in a tagged release" risk became a Public Preview risk. Open: the demo and `demo-spec.html` still describe building
   from the pinned commit; moving them to v1.2.0 needs a rebuild and re-run.
+- 2026-11-15 (user): make the outage case obvious in the README, alert both
+  when a leaf is expiring and when it is past due, and alert on failed calls.
+  Live run (callers delivery broken, left broken): renewal-stalled pending
+  at 1m51s and firing at 2m54s; leaf expired at about 4m28s and every probe
+  call failed with `tls: expired certificate` while the proxy Pods stayed
+  Running. Neither page fired: `tmprl_proxy_router_forwarding_errors_total`
+  stayed 0, and the proxy answered the calls `Unavailable` in
+  `tmprl_proxy_server_requests_total`. Design change (proposal Alerts
+  updated first): new page **Loaded leaf expired**; **Calls failing at the
+  proxy** now fires on over 5% `Unavailable|Internal|Unknown` responses for
+  1 minute instead of forwarding errors. Applied live: leaf expired fired on
+  the first evaluation, calls failing fired 71 s later. After restore, with
+  no proxy restarts: leaf expired cleared in about 2 minutes, every probe
+  call succeeded in about 2.5 minutes, calls failing cleared in about 4.5
+  minutes. Demo README gains
+  "4. Simulate an outage" with the measured timeline.
 
 ## Roadmap
 

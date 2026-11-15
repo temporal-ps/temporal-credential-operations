@@ -569,8 +569,9 @@ and how long remains before calls fail, is in the
 <a href="spec.html#observability">proposal</a>. With the demo defaults
 (<em>L</em> = 5 minutes, <em>R</em> = 1 minute), renewal stalled fires with at most
 3 minutes left on the leaf, so breaking delivery with
-<code>inject-eso-failure.sh</code> shows the alert pending and then firing while
-probe calls still succeed.</p>
+<code>inject-eso-failure.sh</code> shows the ticket pending and then firing while
+probe calls still succeed. Leaving it broken until the leaf expires shows both
+page alerts for the same outage: leaf expired and calls failing.</p>
 <pre><code># ticket: Leaf renewal stalled: two refreshes missed
 (tmprl_proxy_tls_cert_expiry_timestamp_seconds{file="cert"} - time()) &lt; ($leaf_ttl - 2 * $refresh_interval)
 
@@ -580,11 +581,20 @@ increase(tmprl_proxy_tls_reloads_total{result="failure"}[10m]) &gt; 0
 # ticket: A proxy stopped reporting (per namespace, against its replica count)
 count by (namespace) (tmprl_proxy_tls_cert_expiry_timestamp_seconds{file="cert"}) &lt; $replicas
 
-# page: No proxy serving in a client namespace (every proxy Pod's scrape fails)
-sum by (namespace) (up{job="temporal-proxy"}) == 0
+# page: Loaded leaf expired (past due)
+(tmprl_proxy_tls_cert_expiry_timestamp_seconds{file="cert"} - time()) &lt;= 0
 
-# page: Calls to Temporal Cloud failing at the proxy
-increase(tmprl_proxy_router_forwarding_errors_total[5m]) &gt; 0</code></pre>
+# page: Calls failing at the proxy: over 5% upstream errors for 1 minute
+sum by (namespace) (rate(tmprl_proxy_server_requests_total{code=~"Unavailable|Internal|Unknown"}[2m]))
+  / sum by (namespace) (rate(tmprl_proxy_server_requests_total{code!="Canceled"}[2m])) &gt; 0.05
+
+# page: No proxy serving in a client namespace (every proxy Pod's scrape fails)
+sum by (namespace) (up{job="temporal-proxy"}) == 0</code></pre>
+<p>An expired leaf does not increment
+<code>tmprl_proxy_router_forwarding_errors_total</code>: in the demo, calls failed with
+<code>tls: expired certificate</code> while that counter stayed at 0, and the proxy
+answered them <code>Unavailable</code>. Calls failing is therefore measured from the
+request counter by gRPC code.</p>
 <p>The severity is a label on each rule. No Alertmanager is deployed, so the demo
 shows severities in the Prometheus Alerts page rather than routing them.</p>
 <p>Issuer expiry is not a proxy metric. The proxy's <code>file="ca"</code> series

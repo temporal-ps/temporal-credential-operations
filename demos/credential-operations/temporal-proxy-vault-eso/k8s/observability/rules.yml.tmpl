@@ -4,7 +4,8 @@
 # Prometheus UI under Alerts.
 #
 # Severity follows impact:
-#   page    calls from a cluster are failing now
+#   page    calls from a cluster are failing now (leaf expired, calls
+#           failing, no proxy serving)
 #   ticket  calls still succeed; a deadline is running (the proxy keeps
 #           serving its last valid leaf until it expires)
 groups:
@@ -29,17 +30,29 @@ groups:
         labels: {severity: ticket}
         annotations:
           summary: "fewer proxies than expected report a loaded leaf in {{ $labels.namespace }}; the others still serve, and a rollover's gate cannot pass"
+      - alert: TemporalProxyLeafExpired
+        # Past due: the ticket above was not acted on in time. Temporal Cloud
+        # rejects the leaf, so every call through this proxy fails.
+        expr: (tmprl_proxy_tls_cert_expiry_timestamp_seconds{file="cert"} - time()) <= 0
+        labels: {severity: page}
+        annotations:
+          summary: "{{ $labels.namespace }}/{{ $labels.pod }} is presenting an expired leaf; Temporal Cloud rejects every call through it"
+      - alert: TemporalProxyCallsFailing
+        # Share of calls the proxy answers with an upstream error. Canceled is
+        # excluded: clients cancel calls in normal operation.
+        expr: |
+          sum by (namespace) (rate(tmprl_proxy_server_requests_total{code=~"Unavailable|Internal|Unknown"}[2m]))
+            / sum by (namespace) (rate(tmprl_proxy_server_requests_total{code!="Canceled"}[2m])) > 0.05
+        for: 1m
+        labels: {severity: page}
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of calls through the proxies in {{ $labels.namespace }} are failing"
       - alert: TemporalProxyNoneServing
         # Every proxy Pod in a client namespace is down (for example crash
-        # looping on an expired leaf). No proxy means no forwarding errors, so
+        # looping on an expired leaf). No proxy means no request metrics, so
         # this is the page for that case.
         expr: sum by (namespace) (up{job="temporal-proxy"}) == 0
         for: 1m
         labels: {severity: page}
         annotations:
           summary: "no Temporal Proxy is serving in {{ $labels.namespace }}; calls from it are failing"
-      - alert: TemporalProxyForwardingErrors
-        expr: increase(tmprl_proxy_router_forwarding_errors_total[5m]) > 0
-        labels: {severity: page}
-        annotations:
-          summary: "{{ $labels.namespace }}/{{ $labels.pod }} is failing to forward calls to Temporal Cloud ({{ $labels.reason }})"
