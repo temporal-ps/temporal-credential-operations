@@ -1,0 +1,20 @@
+# Client namespace "workers" after migration: the proxy mounts the ESO-managed
+# Secret temporal-cloud-leaf instead of the manual bootstrap Secret.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../clients/workers
+  - ../../eso-clients/workers
+patches:
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: temporal-proxy
+      spec:
+        template:
+          spec:
+            volumes:
+              - name: cloud-leaf
+                secret:
+                  secretName: temporal-cloud-leaf

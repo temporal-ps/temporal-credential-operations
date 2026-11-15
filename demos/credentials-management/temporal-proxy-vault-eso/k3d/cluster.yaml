@@ -1,0 +1,19 @@
+# k3d 5.8.x cluster for the Temporal Proxy + Vault PKI + ESO demo.
+# One server, no agents. Bundled Traefik is disabled: nothing here uses
+# ingress; local access is by port-forward.
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: tco-proxy-vault-eso
+servers: 1
+agents: 0
+image: rancher/k3s:v1.31.5-k3s1
+options:
+  k3s:
+    extraArgs:
+      - arg: --disable=traefik
+        nodeFilters:
+          - server:*
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: false

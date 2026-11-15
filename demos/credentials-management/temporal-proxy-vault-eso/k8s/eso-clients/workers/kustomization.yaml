@@ -1,0 +1,19 @@
+# ESO resources for client namespace "workers": Vault role workers-pki, common name
+# workers.temporal-proxy.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: workers
+resources:
+  - ../../eso
+patches:
+  - target:
+      group: generators.external-secrets.io
+      kind: VaultDynamicSecret
+      name: temporal-cloud-leaf
+    patch: |-
+      - op: replace
+        path: /spec/parameters/common_name
+        value: workers.temporal-proxy
+      - op: replace
+        path: /spec/provider/auth/kubernetes/role
+        value: workers-pki

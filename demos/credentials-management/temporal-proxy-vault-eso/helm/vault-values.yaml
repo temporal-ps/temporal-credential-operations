@@ -1,0 +1,21 @@
+# Vault from the official Helm chart, dev mode: in-memory storage, unsealed,
+# HTTP on 8200, root token "root". Demo only. Production Vault is persistent,
+# TLS-enabled, and accessed with the operator's own identity.
+server:
+  dev:
+    enabled: true
+    devRootToken: root
+  # The chart binds the server's service account to system:auth-delegator,
+  # which Vault's Kubernetes auth method needs to review ESO's tokens.
+  authDelegator:
+    enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+injector:
+  enabled: false
+ui:
+  enabled: false

@@ -1,0 +1,25 @@
+# Renders the generator output into the kubernetes.io/tls Secret the proxy
+# mounts. Both keys change in one Secret update, so the proxy never sees a
+# certificate without its matching key.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: temporal-cloud-leaf
+spec:
+  # Demo value: a 30-minute leaf refreshed every 10 minutes.
+  refreshInterval: 10m
+  target:
+    name: temporal-cloud-leaf
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/tls
+      engineVersion: v2
+      data:
+        tls.crt: "{{ .certificate }}"
+        tls.key: "{{ .private_key }}"
+  dataFrom:
+    - sourceRef:
+        generatorRef:
+          apiVersion: generators.external-secrets.io/v1alpha1
+          kind: VaultDynamicSecret
+          name: temporal-cloud-leaf

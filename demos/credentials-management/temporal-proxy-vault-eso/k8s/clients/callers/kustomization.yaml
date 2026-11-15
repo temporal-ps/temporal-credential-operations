@@ -1,0 +1,7 @@
+# Client namespace "callers": one Temporal Proxy and one CLI probe.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: callers
+resources:
+  - ../../proxy
+  - ../../probe

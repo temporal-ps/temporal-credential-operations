@@ -1,0 +1,19 @@
+# ESO resources for client namespace "callers": Vault role callers-pki, common name
+# callers.temporal-proxy.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: callers
+resources:
+  - ../../eso
+patches:
+  - target:
+      group: generators.external-secrets.io
+      kind: VaultDynamicSecret
+      name: temporal-cloud-leaf
+    patch: |-
+      - op: replace
+        path: /spec/parameters/common_name
+        value: callers.temporal-proxy
+      - op: replace
+        path: /spec/provider/auth/kubernetes/role
+        value: callers-pki

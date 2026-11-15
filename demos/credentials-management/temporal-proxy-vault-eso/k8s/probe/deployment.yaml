@@ -1,0 +1,69 @@
+# Steady traffic through the in-namespace proxy, with no Temporal Cloud
+# credentials in the Pod. One CountWorkflowExecutions call every two seconds;
+# each line is logged as `ok` or `FAIL` with the CLI's output.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cli-probe
+  labels:
+    app.kubernetes.io/name: cli-probe
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cli-probe
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cli-probe
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: probe
+          image: temporalio/temporal:1.9.1
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              addr="temporal-proxy.${POD_NAMESPACE}.svc.cluster.local:7233"
+              echo "probing ${TEMPORAL_NAMESPACE} via ${addr}"
+              while true; do
+                ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                if out="$(temporal workflow count --address "${addr}" --namespace "${TEMPORAL_NAMESPACE}" 2>&1)"; then
+                  echo "${ts} ok ${out}"
+                else
+                  echo "${ts} FAIL $(echo "${out}" | tr '\n' ' ')"
+                fi
+                sleep 2
+              done
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: TEMPORAL_NAMESPACE
+              valueFrom:
+                configMapKeyRef:
+                  name: temporal-cloud-target
+                  key: TEMPORAL_NAMESPACE
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

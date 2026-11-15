@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-proxy
+  labels:
+    app.kubernetes.io/name: temporal-proxy
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: temporal-proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: temporal-proxy
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: proxy
+          image: temporal-proxy:64fae49
+          imagePullPolicy: Never
+          args: ["serve", "--config", "/etc/proxy/config.yaml"]
+          env:
+            - name: TEMPORAL_CLOUD_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: temporal-cloud-target
+                  key: TEMPORAL_CLOUD_ENDPOINT
+          ports:
+            - name: grpc
+              containerPort: 7233
+            - name: metrics
+              containerPort: 9090
+          readinessProbe:
+            grpc:
+              port: 7233
+            periodSeconds: 5
+          livenessProbe:
+            grpc:
+              port: 7233
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/proxy
+              readOnly: true
+            # Mount the whole Secret volume. A subPath mount never receives
+            # updates, which would silently defeat hot reload.
+            - name: cloud-leaf
+              mountPath: /etc/temporal-proxy/cloud
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: temporal-proxy-config
+        - name: cloud-leaf
+          secret:
+            # Before migration: the manually generated bootstrap material.
+            # scripts/migrate-switch.sh applies k8s/clients-vault, which
+            # repoints this at the ESO-managed temporal-cloud-leaf.
+            secretName: temporal-cloud-leaf-manual
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal-proxy
+  labels:
+    app.kubernetes.io/name: temporal-proxy
+spec:
+  selector:
+    app.kubernetes.io/name: temporal-proxy
+  ports:
+    - name: grpc
+      port: 7233
+      targetPort: grpc
+      appProtocol: grpc
+    - name: metrics
+      port: 9090
+      targetPort: metrics

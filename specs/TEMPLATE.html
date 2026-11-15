@@ -1,0 +1,200 @@
+<!doctype html>
+<!--
+  Operational Concern Specification Template
+
+  Copy to specs/temporal-credential-operations/<concern-name>/spec.html
+  (or <concern-name>/<approach>/spec.html) and fill in each section.
+  Fix the stylesheet path for the copy's depth. See specs/README.md for the
+  workflow and AGENTS.md for the rule against naming internal sources.
+
+  Building blocks from specs/assets/spec.css:
+    .callout (.decision | .warn | .risk | .ok)   highlighted note
+    .badge (.draft | .confirmed | .inferred | .target | .open | .high | .medium | .low)
+    .table-wrap > table                          scrollable table
+    .cards > .card                               side-by-side summaries
+    ol.phases                                    numbered procedure steps
+    ul.checklist (li.done)                       criteria and questions
+    .diagram > figure > pre.mermaid              Mermaid diagram
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>[Concern Title]</title>
+<link rel="stylesheet" href="../../assets/spec.css">
+</head>
+<body>
+
+<header class="topbar">
+  <span class="mark" aria-hidden="true"></span>
+  <span class="crumbs">Specs / <strong>[Concern Title]</strong></span>
+  <span class="spacer"></span>
+  <span class="badge draft">DRAFT</span>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="label">Contents</div>
+  <ol>
+    <li><a href="#overview">Overview</a></li>
+    <li><a href="#goals">Goals &amp; Success Criteria</a></li>
+    <li><a href="#current">Current State</a></li>
+    <li><a href="#desired">Desired State</a></li>
+    <li><a href="#technical">Technical Approach</a></li>
+    <li><a href="#deliverables">Deliverables</a></li>
+    <li><a href="#implementation">Implementation Strategy</a></li>
+    <li><a href="#validation">Validation Strategy</a></li>
+    <li><a href="#risks">Risks &amp; Mitigation</a></li>
+    <li><a href="#dependencies">Dependencies</a></li>
+    <li><a href="#questions">Open Questions</a></li>
+    <li><a href="#references">References</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<h1>[Concern Title]</h1>
+<p class="lede">[One sentence: the operational problem and the outcome.]</p>
+
+<dl class="meta">
+  <div><dt>Status</dt><dd><span class="badge draft">DRAFT</span> (Draft / Review / Approved / Implementing / Validating / Complete)</dd></div>
+  <div><dt>Owner</dt><dd>[Name]</dd></div>
+  <div><dt>Created</dt><dd>[Date]</dd></div>
+  <div><dt>Updated</dt><dd>[Date]</dd></div>
+  <div><dt>Progress</dt><dd><a href="PROGRESS.md">PROGRESS.md</a></dd></div>
+</dl>
+
+<h2 id="overview">Overview</h2>
+<h3>Executive Summary</h3>
+<p>[1–2 paragraphs: what operational problem this concern addresses, why a
+customer running Temporal in production would hit it, and what the runbook and
+demo will leave them able to do.]</p>
+
+<h2 id="goals">Goals &amp; Success Criteria</h2>
+<h3>Primary Goals</h3>
+<ul>
+  <li>[Measurable outcome]</li>
+</ul>
+<h3>Acceptance Criteria</h3>
+<ul class="checklist">
+  <li>[Testable criterion]</li>
+</ul>
+
+<h2 id="current">Current State (As-Is)</h2>
+<h3>What happens today without this?</h3>
+<p>[The operational gap: what a team does by default, and where it breaks down.]</p>
+<h3>Pain points</h3>
+<ul>
+  <li>[Pain point]</li>
+</ul>
+
+<h2 id="desired">Desired State (To-Be)</h2>
+<h3>Approach Overview</h3>
+<p>[The approach after this concern is addressed: tools, patterns, and how they fit.]</p>
+<div class="diagram"><figure>
+<pre class="mermaid">
+flowchart LR
+  A["Component A"] --> B["Component B"]
+</pre>
+<figcaption>[What the diagram shows.]</figcaption>
+</figure></div>
+<h3>Key Capabilities</h3>
+<ul>
+  <li>[What the operator or system can now do]</li>
+</ul>
+
+<h2 id="technical">Technical Approach</h2>
+<h3>Design Decisions</h3>
+<div class="table-wrap"><table>
+  <thead><tr><th>Decision</th><th>Rationale</th><th>Alternative considered</th></tr></thead>
+  <tbody>
+    <tr><td>[Decision]</td><td>[Why]</td><td>[What else, and why not]</td></tr>
+  </tbody>
+</table></div>
+<h3>Component Design</h3>
+<h4>[Component]</h4>
+<ul>
+  <li><strong>Purpose:</strong></li>
+  <li><strong>Responsibilities:</strong></li>
+  <li><strong>Interfaces / config surface:</strong></li>
+</ul>
+<h3>Configuration / Deployment</h3>
+<p>[Config files, CRDs, environment variables, deployment topology.]</p>
+
+<h2 id="deliverables">Deliverables</h2>
+<p>Every concern produces both of the following.</p>
+<h3>Runbook</h3>
+<ul>
+  <li><strong>Audience:</strong> [Who reads this]</li>
+  <li><strong>Lives at:</strong> <code>runbooks/&lt;concern-name&gt;/</code></li>
+  <li><strong>Outline:</strong>
+    <ol><li>[Step group]</li></ol>
+  </li>
+  <li><strong>Each step must state:</strong> the command or action, and how to verify it worked.</li>
+</ul>
+<h3>Demo</h3>
+<ul>
+  <li><strong>Lives at:</strong> <code>demos/&lt;concern-name&gt;/</code></li>
+  <li><strong>Scenario:</strong> [What is set up, triggered, and observed]</li>
+  <li><strong>What it proves:</strong> [The specific claim from Goals]</li>
+  <li><strong>What it does not prove:</strong> [Explicit scope limits]</li>
+</ul>
+
+<h2 id="implementation">Implementation Strategy</h2>
+<h3>Phases</h3>
+<ol class="phases">
+  <li><strong>[Phase name].</strong> [Deliverable]</li>
+</ol>
+<h3>Critical Files</h3>
+<ul>
+  <li><code>[path]</code>: [purpose or change]</li>
+</ul>
+
+<h2 id="validation">Validation Strategy</h2>
+<h3>Runbook Validation</h3>
+<ul class="checklist">
+  <li>Every command in the runbook has been run against a real environment.</li>
+  <li>Every verification step distinguishes success from failure.</li>
+</ul>
+<h3>Demo Validation</h3>
+<ul class="checklist">
+  <li>Demo runs end to end from a clean environment.</li>
+  <li>Demo's observable outcome matches "What it proves".</li>
+</ul>
+
+<h2 id="risks">Risks &amp; Mitigation</h2>
+<div class="table-wrap"><table>
+  <thead><tr><th>Risk</th><th>Impact</th><th>Likelihood</th><th>Mitigation</th></tr></thead>
+  <tbody>
+    <tr><td>[Risk]</td><td><span class="badge high">High</span></td><td><span class="badge medium">Medium</span></td><td>[Prevention or handling]</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="dependencies">Dependencies</h2>
+<h3>External Dependencies</h3>
+<ul><li>[Dependency and version constraint]</li></ul>
+<h3>Rollout Blockers</h3>
+<ul><li>[Anything that must be true before Implementing can start]</li></ul>
+
+<h2 id="questions">Open Questions &amp; Notes</h2>
+<h3>Questions for Reviewer</h3>
+<ul class="checklist"><li>[Question?]</li></ul>
+<h3>Implementation Notes</h3>
+<p>[Gotchas and assumptions for whoever implements this.]</p>
+
+<h2 id="references">References &amp; Links</h2>
+<p>[Public, customer-shareable references only. No internal repositories, paths,
+or tool names.]</p>
+<ul><li><a href="https://docs.temporal.io/">Temporal documentation</a></li></ul>
+
+</main>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.esm.min.mjs";
+  const forced = document.documentElement.dataset.theme;
+  const dark = forced ? forced === "dark" : !window.matchMedia("(prefers-color-scheme: light)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
+</script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+# Temporal Proxy configuration for one client namespace.
+#
+# Clients connect to the gateway in plaintext with no credentials and send the
+# fully qualified Namespace name, so no Namespace rewrite is configured. The
+# proxy authenticates to Temporal Cloud with mTLS only: there is deliberately no
+# `credentials` block, so no API key can be used.
+#
+# ${TEMPORAL_CLOUD_ENDPOINT} is expanded by the proxy from its environment.
+hostPort: :7233
+
+upstreams:
+  - name: cloud
+    hostPort: ${TEMPORAL_CLOUD_ENDPOINT}
+    tls:
+      # The proxy requires an explicit CA whenever a client certificate is set.
+      # Temporal Cloud's server certificate chains to a public root, so use the
+      # image's system bundle. This is not the client CA Temporal Cloud trusts.
+      ca: /etc/ssl/certs/ca-certificates.crt
+      # Mounted from the Secret named in the Deployment. Re-read every minute.
+      cert: /etc/temporal-proxy/cloud/tls.crt
+      key: /etc/temporal-proxy/cloud/tls.key
+
+routing:
+  default: cloud
+  system: cloud
+
+metrics:
+  hostPort: :9090
