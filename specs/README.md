@@ -122,11 +122,11 @@ Leave feedback in `PROGRESS.md` under Feedback Items.
 
 ## Current Concerns
 
-### Credentials Management: Temporal Proxy + Vault PKI + ESO
+### Credential Operations: Temporal Proxy + Vault PKI + ESO
 
 - **Spec:** `specs/temporal-credential-operations/temporal-proxy-vault-eso/`
   (`spec.html` is the proposal; `demo-spec.html` specifies the demo)
-- **Demo:** `demos/credentials-management/temporal-proxy-vault-eso/`
+- **Demo:** `demos/credential-operations/temporal-proxy-vault-eso/`
 - **Goal:** Rotate the client certificate authority (CA) Temporal Cloud
   trusts, with Vault PKI signing short-lived leaves, External Secrets
   Operator (ESO) delivering them, and Temporal Proxy presenting them with hot

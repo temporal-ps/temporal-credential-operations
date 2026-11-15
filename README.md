@@ -30,7 +30,7 @@ This repository shows a different arrangement:
 | Proposal | [`specs/temporal-credential-operations/temporal-proxy-vault-eso/spec.html`](specs/temporal-credential-operations/temporal-proxy-vault-eso/spec.html) (open in a browser): the approach, alternatives, open questions, and evolution, for evaluation |
 | Demo spec | [`demo-spec.html`](specs/temporal-credential-operations/temporal-proxy-vault-eso/demo-spec.html): how the demo is built and what it proves |
 | Progress | [`PROGRESS.md`](specs/temporal-credential-operations/temporal-proxy-vault-eso/PROGRESS.md) |
-| Demo | [`demos/credentials-management/temporal-proxy-vault-eso/`](demos/credentials-management/temporal-proxy-vault-eso/README.md): a local k3d cluster with Vault, ESO, Temporal Proxy, Prometheus, and Grafana, against a real Temporal Cloud Namespace |
+| Demo | [`demos/credential-operations/temporal-proxy-vault-eso/`](demos/credential-operations/temporal-proxy-vault-eso/README.md): a local k3d cluster with Vault, ESO, Temporal Proxy, Prometheus, and Grafana, against a real Temporal Cloud Namespace |
 | Runbook | Not written yet: it will be written from the demo scripts' actual output |
 
 ## Try the demo
@@ -42,7 +42,7 @@ certificate and key it accepts, and a Temporal Cloud Operations API key.
 cp .env.example .env.local    # then fill it in
 ```
 
-Then follow the [demo README](demos/credentials-management/temporal-proxy-vault-eso/README.md).
+Then follow the [demo README](demos/credential-operations/temporal-proxy-vault-eso/README.md).
 
 ## Repository layout
 

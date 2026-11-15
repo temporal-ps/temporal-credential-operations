@@ -55,10 +55,10 @@ eggs/
 .eggs/
 lib/
 lib64/
-!demos/credentials-management/vault/scripts/lib/
-!demos/credentials-management/vault/scripts/lib/common.sh
-!demos/credentials-management/temporal-proxy-vault-eso/scripts/lib/
-!demos/credentials-management/temporal-proxy-vault-eso/scripts/lib/common.sh
+!demos/credential-operations/vault/scripts/lib/
+!demos/credential-operations/vault/scripts/lib/common.sh
+!demos/credential-operations/temporal-proxy-vault-eso/scripts/lib/
+!demos/credential-operations/temporal-proxy-vault-eso/scripts/lib/common.sh
 parts/
 sdist/
 var/
@@ -211,7 +211,7 @@ certs/
 *.tfstate
 *.tfstate.*
 .terraform.lock.hcl
-!demos/credentials-management/vault/terraform/.terraform.lock.hcl
+!demos/credential-operations/vault/terraform/.terraform.lock.hcl
 
 # Temporary files
 tmp/
@@ -259,7 +259,7 @@ out/
 vendor/
 
 # Temporal Proxy + Vault + ESO demo: exported issuer certificates and local state
-demos/credentials-management/temporal-proxy-vault-eso/.state/
+demos/credential-operations/temporal-proxy-vault-eso/.state/
 
 # Internal and customer working notes: never commit. Keep them in .local/.
 .local/

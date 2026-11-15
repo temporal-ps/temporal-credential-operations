@@ -10,7 +10,7 @@
 
 <header class="topbar">
   <span class="mark" aria-hidden="true"></span>
-  <span class="crumbs">Specs / Credentials Management / <strong>Temporal Proxy + Vault PKI + ESO</strong></span>
+  <span class="crumbs">Specs / Credential Operations / <strong>Temporal Proxy + Vault PKI + ESO</strong></span>
   <span class="spacer"></span>
   <span class="badge draft">DRAFT</span>
 </header>
@@ -652,7 +652,7 @@ Acme's lifetime policy, or proxy behavior under production load.</p>
 <ul>
   <li><strong>Audience:</strong> the operator performing a CA rollover, and the Vault,
   Kubernetes, and Temporal Cloud owners who approve it.</li>
-  <li><strong>Lives at:</strong> <code>runbooks/credentials-management/temporal-proxy-vault-eso/</code></li>
+  <li><strong>Lives at:</strong> <code>runbooks/credential-operations/temporal-proxy-vault-eso/</code></li>
   <li><strong>Outline:</strong>
     <ol>
       <li>Before you start: lead time, approvals, rollback rules.</li>
@@ -668,7 +668,7 @@ Acme's lifetime policy, or proxy behavior under production load.</p>
 </ul>
 <h3>Demo</h3>
 <ul>
-  <li><strong>Lives at:</strong> <code>demos/credentials-management/temporal-proxy-vault-eso/</code></li>
+  <li><strong>Lives at:</strong> <code>demos/credential-operations/temporal-proxy-vault-eso/</code></li>
   <li><strong>Specified in:</strong> <a href="demo-spec.html">demo-spec.html</a></li>
   <li><strong>Proves:</strong> renewal without restarts or trust changes; the gate
   blocks an unsafe retirement and names the cause; traffic continues through every

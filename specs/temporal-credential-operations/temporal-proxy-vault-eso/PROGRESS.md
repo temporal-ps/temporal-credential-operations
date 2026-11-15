@@ -22,7 +22,7 @@ first run.
 ## Milestone 1 Log
 
 2026-11-13: Demo scaffold under
-`demos/credentials-management/temporal-proxy-vault-eso/` (k3d config, proxy
+`demos/credential-operations/temporal-proxy-vault-eso/` (k3d config, proxy
 image build from pinned commit 64fae49, proxy and CLI probe per client
 namespace, Prometheus, Grafana dashboard, verify and hot-reload scripts).
 `k3d 5.8.3` added to `.tool-versions`.
